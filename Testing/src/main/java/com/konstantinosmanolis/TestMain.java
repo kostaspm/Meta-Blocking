@@ -74,16 +74,11 @@ public class TestMain {
 		dfreduced.show(false);
 		dfreduced.printSchema();
 
+		// Uses the UDF createPairsUdf and extractInfoUdf and creates 2 columns
+		// with the unique pairs in every block and the useful information for
+		// the weight computation
 		dfreduced = dfreduced.withColumn("PairsList", callUDF("createPairs", col("Entity_BlockNumberList")))
 				.withColumn("InfoList", callUDF("extractInfo", col("Entity_BlockNumberList")));
-		dfreduced.show(false);
-
-		dfreduced = dfreduced
-				.withColumn("merged_pairs",
-						explode(expr(
-								"transform(dfreduced.col(\"PairsList\"), (x, i) -> struct(x as element1, dfreduced.col(\"InfoList\").getItem(i).as(\"element2\")))")))
-				.withColumn("element1", col("merged_pairs.element1"))
-				.withColumn("element2", col("merged_pairs.element2"));
 		dfreduced.show(false);
 	}
 
