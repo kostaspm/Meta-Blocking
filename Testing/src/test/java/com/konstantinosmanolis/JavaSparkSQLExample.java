@@ -49,8 +49,6 @@ public class JavaSparkSQLExample {
 		// Stage 1: Block Filtering
 		spark.sparkContext().setLogLevel("ERROR");
 		Dataset<Row> df = spark.read().json("data/blocks.json");
-		df.show();
-		df.printSchema();
 		spark.udf().register("createPairstest", new createPairsUdfTest(), DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 //		int count = 0;
 //		for (int i = 0; i < 4 - 1; i++) {
@@ -74,7 +72,8 @@ public class JavaSparkSQLExample {
 //		df = df.groupBy("entities1").pivot("block").count().na().fill(0);
 //		df.show();
 		
-		df = df.withColumn("Pairs", callUDF("createPairstest", col("entities")));
 		df.show(false);
+		//df.select(col("block"), df.agg(df.col("entities").));
+		//df.withColumn("SUM", df.));
 	}
 }

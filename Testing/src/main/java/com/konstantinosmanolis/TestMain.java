@@ -30,6 +30,7 @@ public class TestMain {
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 		spark.udf().register("extractInfo", new extractInfoUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
+		spark.udf().register("averageWeight", new averageWeightUdf(), DataTypes.DoubleType);
 		df.show(false);
 
 		/*
@@ -93,8 +94,10 @@ public class TestMain {
 		 * callUDF("extractInfo", col("Entity_BlockNumberList")));
 		 * dfreduced.show(false);
 		 */
-		
-		// Stage 3 Weighted Node Pruning
+
+		// Stage 3
+		// Creates the preffered schema for the stage 3 (Pruning Stage)
+		// [node1, node2] | Weight
 		Dataset<Row> dfnodes = spark.read().json("data/nodes.json");
 		dfnodes = dfnodes
 				.withColumn("JaccardWeight",
@@ -102,38 +105,41 @@ public class TestMain {
 				.drop("blocksNode1").drop("blocksNode2").drop("commonBlocks");
 		dfnodes.cache();
 		dfnodes.show(false);
-		dfnodes.printSchema();
-		
-		double meanWeight = dfnodes.select(avg(dfnodes.col("JaccardWeight"))).head().getDouble(0);
-		
-		Dataset<Row> dfnodesWNP = dfnodes.withColumn("node", explode(dfnodes.col("node")));
+
+		// Weighted Node Pruning
+		System.out.println("WNP");
+		Dataset<Row> dfnodesWNP = dfnodes
+				.withColumn("AllTogether",
+						array(struct(dfnodes.col("node").getItem(0),
+								struct(dfnodes.col("node").getItem(1), dfnodes.col("JaccardWeight"))),
+								struct(dfnodes.col("node").getItem(1),
+										struct(dfnodes.col("node").getItem(0), dfnodes.col("JaccardWeight")))))
+				.drop("node").drop("JaccardWeight");
+
+		dfnodesWNP = dfnodesWNP.withColumn("AllTogether", explode(dfnodesWNP.col("AllTogether")));
+		dfnodesWNP = dfnodesWNP.withColumn("Node", dfnodesWNP.col("AllTogether").getItem("col1"))
+							   .withColumn("Node2_Weight", dfnodesWNP.col("AllTogether").getItem("col2")).drop("AllTogether");
+		dfnodesWNP = dfnodesWNP.groupBy("Node").agg(collect_list(dfnodesWNP.col("Node2_Weight")).as("Node2_Weight")).sort(dfnodesWNP.col("Node").asc());
+		dfnodesWNP = dfnodesWNP.withColumn("Size", size(dfnodesWNP.col("Node2_Weight")))
+							   .withColumn("List", dfnodesWNP.col("Node2_Weight.JaccardWeight"));
+		dfnodesWNP = dfnodesWNP.withColumn("Average", callUDF("averageWeight", dfnodesWNP.col("List"), dfnodesWNP.col("Size")))
+				.drop("Size").drop("List");
+		dfnodesWNP = dfnodesWNP.withColumn("Node2_Weight", explode(dfnodesWNP.col("Node2_Weight")));
 		dfnodesWNP.show(false);
-		//============= еимаи кахос==================dfnodes.select("node","JaccardWeight").filter(col("JaccardWeight").gt(meanWeight)).show(false);
-		
+		System.out.println("=========================================================================================");
+		dfnodesWNP.select("Node", "Node2_Weight").filter(col("Node2_Weight.JaccardWeight").gt(dfnodesWNP.col("Average"))).show(false);
+		System.out.println("=========================================================================================");
+
+		// dfnodesWNP = dfnodesWNP.withColumn("node",
+		// dfnodesWNP.col("AllTogether").getItem(0));
+		dfnodesWNP.show(false);
+		dfnodesWNP.printSchema();
+
 		// Stage 3 Weighted Edge Pruning
-		long numberOfNodes = dfnodes.count();
-		dfnodes.select("node","JaccardWeight").filter(col("JaccardWeight").gt(meanWeight/numberOfNodes)).show(false);
-		
-		
-		// Paper's method
-		dfnodes = dfnodes.withColumn("node", explode(dfnodes.col("node")));
-		dfnodes = dfnodes.withColumn("entity_weight", struct(dfnodes.col("node"), dfnodes.col("JaccardWeight"))).drop("JaccardWeight");
-		
-		//dfnodes = dfnodes.withColumn("entitites", explode(dfnodes.col("node")));
-		//dfnodes = dfnodes.select(dfnodes.col("node").getItem(0).as("ID1"), dfnodes.col("node").getItem(1).as("ID2"), dfnodes.col("JaccardWeight"));
-		
-		//dfnodes = dfnodes.withColumn("first", struct(dfnodes.col("ID1"), dfnodes.col("JaccardWeight"))).withColumn("second", struct(dfnodes.col("ID2"), dfnodes.col("JaccardWeight")));
-//		
-//		dfnodes = dfnodes.withColumn("ID1_ID2Weight", struct(dfnodes.col("ID1"), dfnodes.col("second"))).withColumn("ID2_ID1Weight", struct(dfnodes.col("ID2"), dfnodes.col("first")));
-//		dfnodes = dfnodes.select(dfnodes.col("ID1"), dfnodes.col("second"), dfnodes.col("ID2"), dfnodes.col("first"));
-		dfnodes.show(false);
-		
-		//dfnodes.printSchema();
-		
-		// average calculation
-		// dfnodes.select(avg(dfnodes.col("second").getItem("JaccardWeight"))).show();
-		
-		
+		double meanWeight = dfnodes.select(avg(dfnodes.col("JaccardWeight"))).head().getDouble(0);
+		// MPHKE SE SXOLIA GIA NA TO VGALW META TO XREIAZOMAI!
+		//dfnodes.select("node","JaccardWeight").filter(col("JaccardWeight").gt(meanWeight)).show(false);
+
 	}
 
 }
