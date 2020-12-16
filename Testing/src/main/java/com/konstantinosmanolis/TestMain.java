@@ -4,6 +4,8 @@ import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.types.DataTypes;
+import org.apache.spark.sql.types.StructField;
+import org.apache.spark.sql.types.StructType;
 
 import static org.apache.spark.sql.functions.size;
 import static org.apache.spark.sql.functions.expr;
@@ -14,7 +16,8 @@ import static org.apache.spark.sql.functions.callUDF;
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.struct;
 import static org.apache.spark.sql.functions.avg;
-import static org.apache.spark.sql.functions.monotonically_increasing_id;
+import static org.apache.spark.sql.functions.desc;
+import static org.apache.spark.sql.functions.slice;
 
 public class TestMain {
 
@@ -31,6 +34,10 @@ public class TestMain {
 		spark.udf().register("extractInfo", new extractInfoUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 		spark.udf().register("averageWeight", new averageWeightUdf(), DataTypes.DoubleType);
+//		spark.udf().register("getTopNWeights", new getTopNWeightsUdf(), DataTypes.createArrayType(DataTypes.createStructType(new StructField[] {
+//				DataTypes.createStructField("col1", DataTypes.LongType, true),
+//				DataTypes.createStructField("JaccardWeight", DataTypes.DoubleType, true)
+//		}) ));
 		df.show(false);
 
 		/*
@@ -106,8 +113,10 @@ public class TestMain {
 		dfnodes.cache();
 		dfnodes.show(false);
 
-		// Weighted Node Pruning
+		// ========================================= Weighted Node Pruning
 		System.out.println("WNP");
+		
+		// Creates a column with all information nested in an array to explode it so we have every node in a single column for later group by.
 		Dataset<Row> dfnodesWNP = dfnodes
 				.withColumn("AllTogether",
 						array(struct(dfnodes.col("node").getItem(0),
@@ -115,31 +124,48 @@ public class TestMain {
 								struct(dfnodes.col("node").getItem(1),
 										struct(dfnodes.col("node").getItem(0), dfnodes.col("JaccardWeight")))))
 				.drop("node").drop("JaccardWeight");
-
+		dfnodesWNP.show(false);
 		dfnodesWNP = dfnodesWNP.withColumn("AllTogether", explode(dfnodesWNP.col("AllTogether")));
+		
+		// Extracts the 1st node from every pair. We have the (i, j.Wij) (j, i.Wij) in a single column
 		dfnodesWNP = dfnodesWNP.withColumn("Node", dfnodesWNP.col("AllTogether").getItem("col1"))
 							   .withColumn("Node2_Weight", dfnodesWNP.col("AllTogether").getItem("col2")).drop("AllTogether");
+		Dataset<Row> dfnodesCNP = dfnodesWNP;
+		
+		// Groups by EntityID and collects a list with the neighborhood in order to calculate the average Weight for every neighborhood
 		dfnodesWNP = dfnodesWNP.groupBy("Node").agg(collect_list(dfnodesWNP.col("Node2_Weight")).as("Node2_Weight")).sort(dfnodesWNP.col("Node").asc());
+		
+		// Creates a column with the size of the neighborhood and a list with the corresponding weight of every neighbor entity.
 		dfnodesWNP = dfnodesWNP.withColumn("Size", size(dfnodesWNP.col("Node2_Weight")))
 							   .withColumn("List", dfnodesWNP.col("Node2_Weight.JaccardWeight"));
+		
+		// Calling the averageWeight UDF which reads every list in a column and calculates the average of the list.
+		// In the specific calculates the average weight of the neighborhood.
 		dfnodesWNP = dfnodesWNP.withColumn("Average", callUDF("averageWeight", dfnodesWNP.col("List"), dfnodesWNP.col("Size")))
 				.drop("Size").drop("List");
+		
+		// Exploding the list again to filter our data and prune whatever we don't need.
 		dfnodesWNP = dfnodesWNP.withColumn("Node2_Weight", explode(dfnodesWNP.col("Node2_Weight")));
-		dfnodesWNP.show(false);
-		System.out.println("=========================================================================================");
+		
+		System.out.println("====================================================WNP RESULT====================================================");
 		dfnodesWNP.select("Node", "Node2_Weight").filter(col("Node2_Weight.JaccardWeight").gt(dfnodesWNP.col("Average"))).show(false);
-		System.out.println("=========================================================================================");
+		System.out.println("==================================================================================================================");
 
-		// dfnodesWNP = dfnodesWNP.withColumn("node",
-		// dfnodesWNP.col("AllTogether").getItem(0));
 		dfnodesWNP.show(false);
-		dfnodesWNP.printSchema();
 
-		// Stage 3 Weighted Edge Pruning
+		// ========================================= Weighted Edge Pruning
 		double meanWeight = dfnodes.select(avg(dfnodes.col("JaccardWeight"))).head().getDouble(0);
 		// MPHKE SE SXOLIA GIA NA TO VGALW META TO XREIAZOMAI!
-		//dfnodes.select("node","JaccardWeight").filter(col("JaccardWeight").gt(meanWeight)).show(false);
-
+		System.out.println("====================================================WEP RESULT====================================================");
+		dfnodes.select("node","JaccardWeight").filter(col("JaccardWeight").gt(meanWeight)).show(false);
+		System.out.println("==================================================================================================================");
+		
+		dfnodesCNP.show(false);
+		dfnodesCNP.printSchema();
+		dfnodesCNP = dfnodesCNP.orderBy(desc("Node2_Weight.JaccardWeight")).groupBy("Node").agg(collect_list(dfnodesCNP.col("Node2_Weight")).as("Node2_Weight"));
+		dfnodesCNP = dfnodesCNP.withColumn("Node2_Weight_Filtered",slice(dfnodesCNP.col("Node2_Weight"),1,3)).drop("Node2_Weight"); // second argument is the N 
+		dfnodesCNP.show(false);
+		dfnodesCNP.printSchema();
 	}
 
 }
