@@ -1,24 +1,25 @@
 package com.konstantinosmanolis;
 
+import static org.apache.spark.sql.functions.array;
+import static org.apache.spark.sql.functions.sort_array;
+import static org.apache.spark.sql.functions.avg;
+import static org.apache.spark.sql.functions.callUDF;
+import static org.apache.spark.sql.functions.col;
+import static org.apache.spark.sql.functions.collect_list;
+import static org.apache.spark.sql.functions.desc;
+import static org.apache.spark.sql.functions.explode;
+import static org.apache.spark.sql.functions.expr;
+import static org.apache.spark.sql.functions.monotonically_increasing_id;
+import static org.apache.spark.sql.functions.row_number;
+import static org.apache.spark.sql.functions.size;
+import static org.apache.spark.sql.functions.slice;
+import static org.apache.spark.sql.functions.struct;
+
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.expressions.Window;
 import org.apache.spark.sql.types.DataTypes;
-import org.apache.spark.sql.types.StructField;
-import org.apache.spark.sql.types.StructType;
-
-import static org.apache.spark.sql.functions.size;
-import static org.apache.spark.sql.functions.expr;
-import static org.apache.spark.sql.functions.explode;
-import static org.apache.spark.sql.functions.array;
-import static org.apache.spark.sql.functions.collect_list;
-import static org.apache.spark.sql.functions.callUDF;
-import static org.apache.spark.sql.functions.col;
-import static org.apache.spark.sql.functions.struct;
-import static org.apache.spark.sql.functions.avg;
-import static org.apache.spark.sql.functions.desc;
-import static org.apache.spark.sql.functions.slice;
-
 public class TestMain {
 
 	public static void main(String[] args) {
@@ -34,10 +35,6 @@ public class TestMain {
 		spark.udf().register("extractInfo", new extractInfoUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 		spark.udf().register("averageWeight", new averageWeightUdf(), DataTypes.DoubleType);
-//		spark.udf().register("getTopNWeights", new getTopNWeightsUdf(), DataTypes.createArrayType(DataTypes.createStructType(new StructField[] {
-//				DataTypes.createStructField("col1", DataTypes.LongType, true),
-//				DataTypes.createStructField("JaccardWeight", DataTypes.DoubleType, true)
-//		}) ));
 		df.show(false);
 
 		/*
@@ -75,32 +72,26 @@ public class TestMain {
 
 		// Creates an 1x2 array with entity and number of associated blocks (we
 		// need that later too)
-		/*
-		 * dfmapped = dfmapped .withColumn("entity,numberofBlocks",
-		 * array(dfmapped.col("entityId"), dfmapped.col("NumberOfBlocks")))
-		 * .drop("entityId").drop("NumberOfBlocks").withColumnRenamed(
-		 * "AssociatedBlocks", "BlockId"); dfmapped =
-		 * dfmapped.sort(dfmapped.col("BlockId").asc()); dfmapped.show(false);
-		 */
+		
+		 dfmapped = dfmapped .withColumn("entity,numberofBlocks", array(dfmapped.col("entityId"), dfmapped.col("NumberOfBlocks"))).drop("entityId").drop("NumberOfBlocks").withColumnRenamed("AssociatedBlocks", "BlockId"); 
+		 dfmapped = dfmapped.sort(dfmapped.col("BlockId").asc()); dfmapped.show(false);
+		 
 
 		// Groups the columns according the BlockId and creates a list of lists
 		// with the EntityId and Number of associated blocks
-		/*
-		 * Dataset<Row> dfreduced = dfmapped.groupBy("BlockId")
-		 * .agg(collect_list(dfmapped.col("entity,numberofBlocks")).alias(
-		 * "Entity_BlockNumberList")) .sort(dfmapped.col("BlockId").asc());
-		 * dfreduced.show(false); dfreduced.printSchema();
-		 */
+		
+		 Dataset<Row> dfreduced = dfmapped.groupBy("BlockId").agg(collect_list(dfmapped.col("entity,numberofBlocks")).alias("Entity_BlockNumberList")).sort(dfmapped.col("BlockId").asc());
+		 dfreduced.show(false); 
+		 dfreduced.printSchema();
+		 
 
 		// Uses the UDF createPairsUdf and extractInfoUdf and creates 2 columns
 		// with the unique pairs in every block and the useful information for
 		// the weight computation
-		/*
-		 * dfreduced = dfreduced.withColumn("PairsList", callUDF("createPairs",
-		 * col("Entity_BlockNumberList"))) .withColumn("InfoList",
-		 * callUDF("extractInfo", col("Entity_BlockNumberList")));
-		 * dfreduced.show(false);
-		 */
+		
+		 dfreduced = dfreduced.withColumn("PairsList", callUDF("createPairs",col("Entity_BlockNumberList"))).withColumn("InfoList", callUDF("extractInfo", col("Entity_BlockNumberList")));
+		 dfreduced.show(false);
+		 
 
 		// Stage 3
 		// Creates the preffered schema for the stage 3 (Pruning Stage)
@@ -112,6 +103,7 @@ public class TestMain {
 				.drop("blocksNode1").drop("blocksNode2").drop("commonBlocks");
 		dfnodes.cache();
 		dfnodes.show(false);
+		Dataset<Row> dfnodesCEP = dfnodes;
 
 		// ========================================= Weighted Node Pruning
 		System.out.println("WNP");
@@ -147,11 +139,14 @@ public class TestMain {
 		// Exploding the list again to filter our data and prune whatever we don't need.
 		dfnodesWNP = dfnodesWNP.withColumn("Node2_Weight", explode(dfnodesWNP.col("Node2_Weight")));
 		
+		dfnodesWNP = dfnodesWNP.select("Node", "Node2_Weight").filter(col("Node2_Weight.JaccardWeight").gt(dfnodesWNP.col("Average")));
+		
 		System.out.println("====================================================WNP RESULT====================================================");
-		dfnodesWNP.select("Node", "Node2_Weight").filter(col("Node2_Weight.JaccardWeight").gt(dfnodesWNP.col("Average"))).show(false);
+		dfnodesWNP = dfnodesWNP.withColumn("node", array(dfnodesWNP.col("node"), dfnodesWNP.col("Node2_Weight.col1"))).withColumn("JaccardWeight", dfnodesWNP.col("Node2_Weight.JaccardWeight")).drop("Node2_Weight");
+		dfnodesWNP.show(false);
+		dfnodesWNP.printSchema();
 		System.out.println("==================================================================================================================");
 
-		dfnodesWNP.show(false);
 
 		// ========================================= Weighted Edge Pruning
 		double meanWeight = dfnodes.select(avg(dfnodes.col("JaccardWeight"))).head().getDouble(0);
@@ -160,12 +155,31 @@ public class TestMain {
 		dfnodes.select("node","JaccardWeight").filter(col("JaccardWeight").gt(meanWeight)).show(false);
 		System.out.println("==================================================================================================================");
 		
-		dfnodesCNP.show(false);
-		dfnodesCNP.printSchema();
+		
+		// ========================================= Cardinality Node Pruning
 		dfnodesCNP = dfnodesCNP.orderBy(desc("Node2_Weight.JaccardWeight")).groupBy("Node").agg(collect_list(dfnodesCNP.col("Node2_Weight")).as("Node2_Weight"));
-		dfnodesCNP = dfnodesCNP.withColumn("Node2_Weight_Filtered",slice(dfnodesCNP.col("Node2_Weight"),1,3)).drop("Node2_Weight"); // second argument is the N 
 		dfnodesCNP.show(false);
-		dfnodesCNP.printSchema();
+		dfnodesCNP = dfnodesCNP.withColumn("Node2_Weight_Filtered",slice(dfnodesCNP.col("Node2_Weight"),1,1)).drop("Node2_Weight"); // second argument is the N 
+		dfnodesCNP = dfnodesCNP.withColumn("Node2_Weight_Filtered", explode(dfnodesCNP.col("Node2_Weight_Filtered")));
+		System.out.println("====================================================CNP RESULT====================================================");
+		dfnodesCNP = dfnodesCNP.withColumn("Node", sort_array(array(dfnodesCNP.col("Node"), dfnodesCNP.col("Node2_Weight_Filtered.col1")))).withColumn("JaccardWeight", dfnodesCNP.col("Node2_Weight_Filtered.JaccardWeight")).drop("Node2_Weight_Filtered");
+		dfnodesCNP.show(false);
+		System.out.println("==================================================================================================================");
+		
+		
+		// ========================================== Cardinality Edge Pruning
+		Dataset<Row> dfnodesCEPcount = dfnodesCEP.groupBy("JaccardWeight").count().sort(desc("JaccardWeight"));
+		
+		dfnodesCEPcount = dfnodesCEPcount.withColumn("id", row_number().over(Window.orderBy(monotonically_increasing_id())));
+		dfnodesCEPcount = dfnodesCEPcount.filter(col("id").equalTo(3)).select("JaccardWeight");
+		double valueOfMinWeight = dfnodesCEPcount.head().getDouble(0);
+		
+		
+		System.out.println("====================================================CEP RESULT====================================================");
+		dfnodesCEP = dfnodesCEP.filter(col("JaccardWeight").geq(valueOfMinWeight)).select("node", "JaccardWeight");
+		dfnodesCEP.show(false);
+		System.out.println("==================================================================================================================");
+		
 	}
 
 }
