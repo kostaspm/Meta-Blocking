@@ -8,20 +8,20 @@ import org.slf4j.LoggerFactory;
 
 import scala.collection.mutable.WrappedArray;
 
-public class createPairsUdf implements UDF1<WrappedArray<WrappedArray<Long>>, ArrayList<ArrayList<Long>>> {
+public class createPairsUdf implements UDF1<WrappedArray<Long>, ArrayList<ArrayList<Long>>> {
 	private static Logger log = LoggerFactory.getLogger(createPairsUdf.class);
 	private static final long serialVersionUID = -21621751L;
 
 	@Override
-	public ArrayList<ArrayList<Long>> call(WrappedArray<WrappedArray<Long>> entities) throws Exception {
+	public ArrayList<ArrayList<Long>> call(WrappedArray<Long> entities) throws Exception {
 		log.debug("-> call({}, {})", entities);
 		ArrayList<ArrayList<Long>> pairs = new ArrayList<ArrayList<Long>>();
 
 		for (int i = 0; i < entities.length(); i++) {
-			Long num1 = entities.apply(i).apply(0);
+			Long num1 = entities.apply(i);
 			for (int j = i + 1; j < entities.length(); j++) {
 				ArrayList<Long> pair = new ArrayList<>();
-				Long num2 = entities.apply(j).apply(0);
+				Long num2 = entities.apply(j);
 				pair.add(num1);
 				pair.add(num2);
 				pairs.add(pair);
