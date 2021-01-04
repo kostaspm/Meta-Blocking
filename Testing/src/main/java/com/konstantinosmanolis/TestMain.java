@@ -33,7 +33,7 @@ public class TestMain {
 		spark.udf().register("createPairs", new createPairsUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 		spark.udf().register("extractInfo", new extractInfoUdf(),
-				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
+				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.IntegerType)));
 		spark.udf().register("averageWeight", new averageWeightUdf(), DataTypes.DoubleType);
 		df.show(false);
 
@@ -73,8 +73,10 @@ public class TestMain {
 		// Creates an 1x2 array with entity and number of associated blocks (we
 		// need that later too)
 		
-		 dfmapped = dfmapped .withColumn("entity,numberofBlocks", array(dfmapped.col("entityId"), dfmapped.col("NumberOfBlocks"))).drop("entityId").drop("NumberOfBlocks").withColumnRenamed("AssociatedBlocks", "BlockId"); 
-		 dfmapped = dfmapped.sort(dfmapped.col("BlockId").asc()); dfmapped.show(false);
+		 dfmapped = dfmapped .withColumn("entity,numberofBlocks", struct(dfmapped.col("entityId"), dfmapped.col("NumberOfBlocks"))).drop("entityId").drop("NumberOfBlocks").withColumnRenamed("AssociatedBlocks", "BlockId"); 
+		 dfmapped = dfmapped.sort(dfmapped.col("BlockId").asc()); 
+		 dfmapped.show(false);
+		 dfmapped.printSchema();
 		 
 
 		// Groups the columns according the BlockId and creates a list of lists
@@ -89,20 +91,27 @@ public class TestMain {
 		// with the unique pairs in every block and the useful information for
 		// the weight computation
 		
-		 dfreduced = dfreduced.withColumn("PairsList", callUDF("createPairs",col("Entity_BlockNumberList"))).withColumn("InfoList", callUDF("extractInfo", col("Entity_BlockNumberList")));
-		 dfreduced.show(false);
+//		 dfreduced = dfreduced.withColumn("PairsList", callUDF("createPairs",col("Entity_BlockNumberList.entityId"))).withColumn("InfoList", callUDF("extractInfo", col("Entity_BlockNumberList.NumberOfBlocks")));
+//		 dfreduced.show(false);
 		 
+		 Dataset<Row> df1 = dfreduced.withColumn("PairsList", callUDF("createPairs",col("Entity_BlockNumberList.entityId"))).drop("BlockId");
+		 df1 = df1.groupBy("PairsList").count();
+		 df1.show(false);
+		 
+		 
+		 // Job 2 Weight Calculation
+		 Dataset<Row> dfnodes = spark.read().json("data/nodes.json");
+			dfnodes = dfnodes
+					.withColumn("JaccardWeight",
+							expr("double(commonBlocks) / (double(blocksNode1) + double(blocksNode2) - double(commonBlocks))"))
+					.drop("blocksNode1").drop("blocksNode2").drop("commonBlocks");
+			dfnodes.cache();
+			dfnodes.show(false);
 
 		// Stage 3
 		// Creates the preffered schema for the stage 3 (Pruning Stage)
 		// [node1, node2] | Weight
-		Dataset<Row> dfnodes = spark.read().json("data/nodes.json");
-		dfnodes = dfnodes
-				.withColumn("JaccardWeight",
-						expr("double(commonBlocks) / (double(blocksNode1) + double(blocksNode2) - double(commonBlocks))"))
-				.drop("blocksNode1").drop("blocksNode2").drop("commonBlocks");
-		dfnodes.cache();
-		dfnodes.show(false);
+		
 		Dataset<Row> dfnodesCEP = dfnodes;
 
 		// ========================================= Weighted Node Pruning
