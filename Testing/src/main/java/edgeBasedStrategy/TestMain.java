@@ -1,4 +1,4 @@
-package com.konstantinosmanolis;
+package edgeBasedStrategy;
 
 import static org.apache.spark.sql.functions.array;
 import static org.apache.spark.sql.functions.sort_array;
@@ -24,7 +24,7 @@ public class TestMain {
 
 	public static void main(String[] args) {
 
-		SparkSession spark = SparkSession.builder().appName("My Spark App").config("spark.master", "local")
+		SparkSession spark = SparkSession.builder().appName("Edge Based Strategy").config("spark.master", "local")
 				.getOrCreate();
 
 		// Stage 1: Block Filtering
@@ -61,6 +61,7 @@ public class TestMain {
 				"==============================================================================================");
 		// Stage 2: Preprocessing
 
+		// ==================================================== Map 1
 		// Counts the number of blocks in each Entity and breaks the list of
 		// blocks
 		dfmapped = dfmapped.withColumn("NumberOfBlocks", size(dfmapped.col("AssociatedBlocks")))
@@ -70,6 +71,7 @@ public class TestMain {
 		dfmapped = dfmapped.sort("AssociatedBlocks");
 		dfmapped.show(false);
 
+		
 		// Creates an 1x2 array with entity and number of associated blocks (we
 		// need that later too)
 		
@@ -86,7 +88,7 @@ public class TestMain {
 		 dfreduced.show(false); 
 		 dfreduced.printSchema();
 		 
-
+		// ==================================================== Reduce 1
 		// Uses the UDF createPairsUdf and extractInfoUdf and creates 2 columns
 		// with the unique pairs in every block and the useful information for
 		// the weight computation
@@ -95,9 +97,20 @@ public class TestMain {
 //		 dfreduced.show(false);
 		 
 		 Dataset<Row> df1 = dfreduced.withColumn("PairsList", callUDF("createPairs",col("Entity_BlockNumberList.entityId"))).drop("BlockId");
+		 df1 = df1.withColumn("PairsList", explode(df1.col("PairsList")));
+		 df1.show(false);
+		 df1 = df1.withColumn("NumberOfBlocks1_NumberOfBlocks2", callUDF("extractInfo",col("Entity_BlockNumberList.NumberOfBlocks")));
+		 df1.show(false);
+		 df1.printSchema();
+		 
+		 // Counts how many times there is a pair among all blocks. 
+		 // So it is the commong blocks between two entities
+		 System.out.println("Common blocks");
 		 df1 = df1.groupBy("PairsList").count();
 		 df1.show(false);
 		 
+		 
+		 // I need to find how to combine with other information
 		 
 		 // Job 2 Weight Calculation
 		 Dataset<Row> dfnodes = spark.read().json("data/nodes.json");
@@ -108,7 +121,7 @@ public class TestMain {
 			dfnodes.cache();
 			dfnodes.show(false);
 
-		// Stage 3
+		// Stage 3 Prunning
 		// Creates the preffered schema for the stage 3 (Pruning Stage)
 		// [node1, node2] | Weight
 		
@@ -126,6 +139,7 @@ public class TestMain {
 										struct(dfnodes.col("node").getItem(0), dfnodes.col("JaccardWeight")))))
 				.drop("node").drop("JaccardWeight");
 		dfnodesWNP.show(false);
+		dfnodesWNP.printSchema();
 		dfnodesWNP = dfnodesWNP.withColumn("AllTogether", explode(dfnodesWNP.col("AllTogether")));
 		
 		// Extracts the 1st node from every pair. We have the (i, j.Wij) (j, i.Wij) in a single column
@@ -139,6 +153,7 @@ public class TestMain {
 		// Creates a column with the size of the neighborhood and a list with the corresponding weight of every neighbor entity.
 		dfnodesWNP = dfnodesWNP.withColumn("Size", size(dfnodesWNP.col("Node2_Weight")))
 							   .withColumn("List", dfnodesWNP.col("Node2_Weight.JaccardWeight"));
+		dfnodesWNP.show(false);
 		
 		// Calling the averageWeight UDF which reads every list in a column and calculates the average of the list.
 		// In the specific calculates the average weight of the neighborhood.

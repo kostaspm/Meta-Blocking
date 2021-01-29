@@ -1,4 +1,4 @@
-package com.konstantinosmanolis;
+package edgeBasedStrategy;
 
 import org.apache.spark.sql.api.java.UDF2;
 import org.slf4j.Logger;
