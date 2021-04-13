@@ -18,7 +18,9 @@ import static org.apache.spark.sql.functions.array;
 
 import java.lang.reflect.Array;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.sql.Column;
@@ -27,11 +29,16 @@ import org.apache.spark.sql.Encoders;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.api.java.UDF1;
 import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructField;
 import org.apache.spark.sql.types.StructType;
+import org.paukov.combinatorics3.Generator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import scala.collection.mutable.WrappedArray;
 import scala.collection.parallel.ParIterableLike.GroupBy;
 
 public class JavaSparkSQLExample {
@@ -49,31 +56,70 @@ public class JavaSparkSQLExample {
 		// Stage 1: Block Filtering
 		spark.sparkContext().setLogLevel("ERROR");
 		Dataset<Row> df = spark.read().json("data/blocks.json");
-		spark.udf().register("createPairstest", new createPairsUdfTest(), DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
-//		int count = 0;
-//		for (int i = 0; i < 4 - 1; i++) {
-//			for (int j = i + 1; j < 4; j++) {
-//				if (df.col("entities").getItem(i).equals(null) || df.col("entities").getItem(j).equals(null)) {
-//					df = df.withColumn("Pair" + count, lit(null));
-//					count++;
-//				} 
-//				else {
-//					df = df.withColumn("Pair" + count,
-//							array(df.col("entities").getItem(i), df.col("entities").getItem(j)));
-//					count++;
-//				}
-//			}
-//		}
-//		System.out.println("After Transformations");
-//		df.show();
-//		df.printSchema();
-		
-//		df = df.withColumn("entities1", explode(df.col("entities")));
-//		df = df.groupBy("entities1").pivot("block").count().na().fill(0);
-//		df.show();
-		
+		spark.udf().register("createPairsTest", new createPairsUdfTest(),
+				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
+
+		df = df.withColumn("pairs", callUDF("createPairsTest", df.col("entities")));
 		df.show(false);
-		//df.select(col("block"), df.agg(df.col("entities").));
-		//df.withColumn("SUM", df.));
+		df.printSchema();
 	}
 }
+
+//class createPairsUdfTest implements UDF1<WrappedArray<Long>, ArrayList<long[]>> {
+//	private static Logger log = LoggerFactory.getLogger(createPairsUdfTest.class);
+//
+//	private static final long serialVersionUID = -21621750L;
+//
+//	@Override
+//	public ArrayList<long[]> call(WrappedArray<Long> entities) throws Exception {
+//		log.debug("-> call({}, {})", entities);
+//		
+//		ArrayList<long[]> pairs = new ArrayList<long[]>();
+//		Combination.printCombination(entities, entities.length(), 2, pairs);
+//
+//		return pairs;
+//	}
+//
+//}
+//
+//class Combination {
+//
+//	/*
+//	 * arr[] ---> Input Array data[] ---> Temporary array to store current
+//	 * combination start & end ---> Staring and Ending indexes in arr[] index
+//	 * ---> Current index in data[] r ---> Size of a combination to be printed
+//	 */
+//	/*
+//	 * arr[] ---> Input Array data[] ---> Temporary array to store current
+//	 * combination start & end ---> Staring and Ending indexes in arr[] index
+//	 * ---> Current index in data[] r ---> Size of a combination to be printed
+//	 */
+//	static void combinationUtil(WrappedArray<Long> arr, long[] data, int start, int end, int index, int r, ArrayList<long[]> pairs) {
+//		// Current combination is ready to be printed, print it
+//		if (index == r) {
+//			long[] combination = data.clone();
+//			pairs.add(combination);
+//			return;
+//		}
+//
+//		// replace index with all possible elements. The condition
+//		// "end-i+1 >= r-index" makes sure that including one element
+//		// at index will make a combination with remaining elements
+//		// at remaining positions
+//		for (int i = start; i <= end && end - i + 1 >= r - index; i++) {
+//			data[index] = arr.apply(i);
+//			combinationUtil(arr, data, i + 1, end, index + 1, r, pairs);
+//		}
+//	}
+//
+//	// The main function that prints all combinations of size r
+//	// in arr[] of size n. This function mainly uses combinationUtil()
+//	static void printCombination(WrappedArray<Long> arr, int n, int r, ArrayList<long[]> pairs) {
+//		// A temporary array to store all combination one by one
+//		long[] data = new long[r];
+//		//ArrayList<Long> data = new ArrayList<Long>(r);
+//
+//		// Print all combination using temporary array 'data[]'
+//		combinationUtil(arr, data, 0, n - 1, 0, r, pairs);
+//	}
+//}
