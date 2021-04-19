@@ -7,8 +7,8 @@ import static org.apache.spark.sql.functions.size;
 import static org.apache.spark.sql.functions.array_sort;
 import static org.apache.spark.sql.functions.array_intersect;
 import static org.apache.spark.sql.functions.struct;
+import static org.apache.spark.sql.functions.callUDF;
 
-import java.util.ArrayList;
 
 import static org.apache.spark.sql.functions.array;
 import static org.apache.spark.sql.functions.col;
@@ -17,12 +17,9 @@ import static org.apache.spark.sql.functions.expr;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
-import org.apache.spark.sql.api.java.UDF1;
 import org.apache.spark.sql.types.DataTypes;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import scala.collection.mutable.WrappedArray;
+import edgeBasedStrategy.createPairsUdf;
 
 public class ComparisonMain {
 
@@ -32,8 +29,10 @@ public class ComparisonMain {
 				.getOrCreate();
 		
 		spark.sparkContext().setLogLevel("ERROR");
-		//spark.udf().register("extractInfo", new extractInfoUdf(),
-		//		DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
+		spark.udf().register("CommonBlocksUdfWNP", new CalculateCommonBlocksUDF(), DataTypes.createArrayType(DataTypes.LongType));
+		spark.udf().register("BlockSizeUdfWNP", new CalculateBlockSizeUDF(), DataTypes.createArrayType(DataTypes.LongType));
+		spark.udf().register("GetWeightUdfWNP", new GetWeightWNPUDF(), DataTypes.createArrayType(DataTypes.DoubleType));
+		spark.udf().register("CreateNodePairs", new createPairsUdf(), DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 		
 		Dataset<Row> df = spark.read().json("data/blocks.json");
 		System.out.println("Before transformation:");
@@ -82,83 +81,69 @@ public class ComparisonMain {
 		
 		// Stage 3 Pruning
 		// Weighted Node Pruning
-//		Dataset<Row> dfWNP = dfPreprocessing.withColumn("Struct1", dfPreprocessing.col("list").getItem(0)).withColumn("Struct2", dfPreprocessing.col("list").getItem(1));
-//		dfWNP.show(false);
-//		dfWNP.printSchema();
 		
-		Dataset<Row> dfWNP = dfPreprocessing.withColumn("EntityId_AssociatedBlocks", explode(dfPreprocessing.col("EntityId_AssociatedBlocks")));
-		dfWNP.createOrReplaceTempView("data");
-		//dfWNP = spark.sql("SELECT list FROM data WHERE BlockId = 1");
-		//dfWNP = dfWNP.select("list.entityId").where(dfWNP.col("BlockId") == 1);
+		Dataset<Row> dfWNP = dfPreprocessing.withColumn("CommonBlocks", callUDF("CommonBlocksUdfWNP", dfPreprocessing.col("EntityId_AssociatedBlocks.AssociatedBlocks")))
+				.withColumn("BlockSize", callUDF("BlockSizeUdfWNP", dfPreprocessing.col("EntityId_AssociatedBlocks.AssociatedBlocks")));
+		dfWNP.show(false);
+		
+		dfWNP = dfWNP.withColumn("EntityIdList", dfWNP.col("EntityId_AssociatedBlocks.entityId"));
+		dfWNP.show(false);
+		dfWNP = dfWNP.withColumn("Edges", callUDF("CreateNodePairs", dfWNP.col("EntityIdList"))).drop("EntityIdList");
+		dfWNP.show(false);
+		
+		//dfWNP = dfWNP.withColumn("Edges", col)
+		
+		dfWNP = dfWNP.withColumn("WeightsList", callUDF("GetWeightUdfWNP",dfWNP.col("BlockSize"), dfWNP.col("CommonBlocks"))).drop("EntityId_AssociatedBlocks").drop("CommonBlocks").drop("BlockSize").drop("BlockId");
+		dfWNP.show(false);
+		
+		
+		String transform_expr = "transform(WeightsList, (x, i) -> struct(x as element1, Edges[i] as element2))";
+		dfWNP = dfWNP.withColumn("merged_arrays", explode(expr(transform_expr)))
+				.withColumn("Weight", col("merged_arrays.element1"))
+				.withColumn("Edges", col("merged_arrays.element2")).drop("merged_arrays")
+				.drop("WeightsList");
+		dfWNP.show(false);
+		dfWNP = dfWNP.dropDuplicates(); //removing 
+		//dfWNP = dfWNP.withColumn("entities", explode(dfWNP.col("EdgesNew")));
+
+		dfWNP.show(false);
+		
+		
+		/*
+		 * // Stage 3 Pruning
+		// Weighted Node Pruning
+		
+		Dataset<Row> dfWNP = dfPreprocessing.withColumn("EntityIdList", dfPreprocessing.col("EntityId_AssociatedBlocks.entityId"));
+	
+		dfWNP = dfWNP.withColumn("Edges", callUDF("CreateNodePairs", dfWNP.col("EntityIdList"))).drop("EntityIdList");
+		
+		dfWNP = dfWNP.withColumn("Edges", explode(dfWNP.col("Edges")));
+		dfWNP = dfWNP.dropDuplicates("Edges");
+		dfWNP = dfWNP.groupBy("BlockId").agg(collect_list("Edges").as("Edges"), first(col("EntityId_AssociatedBlocks")).as("EntityId_AssociatedBlocks"));
 		dfWNP.show(false);
 		dfWNP.printSchema();
-		dfWNP = dfWNP.select("BlockId","EntityId_AssociatedBlocks.AssociatedBlocks");
-		dfWNP = dfWNP.groupBy("BlockId").agg(collect_list(dfWNP.col("AssociatedBlocks")).as("Blocks"));
+		
+		dfWNP = dfWNP.withColumn("CommonBlocks", callUDF("CommonBlocksUdfWNP", dfWNP.col("EntityId_AssociatedBlocks.AssociatedBlocks")))
+				.withColumn("BlockSize", callUDF("BlockSizeUdfWNP", dfWNP.col("EntityId_AssociatedBlocks.AssociatedBlocks")));
 		dfWNP.show(false);
 		
 		
-	
-//		dfWNP = dfWNP.withColumn("Block1", dfWNP.col("Struct1.AssociatedBlocks")).withColumn("Block2", dfWNP.col("Struct2.AssociatedBlocks")).drop("Struct1").drop("Struct2");
-//		dfWNP = dfWNP.withColumn("JaccardWeight", expr("int(size(array_intersect(Block1, Block2)))/int(size(Block1) + size(Block2) - int(size(array_intersect(Block1, Block2))))"));
-//		dfWNP.show(false);
+		dfWNP = dfWNP.withColumn("WeightsList", callUDF("GetWeightUdfWNP",dfWNP.col("BlockSize"), dfWNP.col("CommonBlocks"))).drop("EntityId_AssociatedBlocks").drop("CommonBlocks").drop("BlockSize").drop("BlockId");
+		dfWNP.show(false);
+		
+		
+		String transform_expr = "transform(WeightsList, (x, i) -> struct(x as element1, Edges[i] as element2))";
+		dfWNP = dfWNP.withColumn("merged_arrays", explode(expr(transform_expr)))
+				.withColumn("Weight", col("merged_arrays.element1"))
+				.withColumn("Edges", col("merged_arrays.element2")).drop("merged_arrays")
+				.drop("WeightsList");
+		dfWNP.show(false);
+		dfWNP = dfWNP.withColumn("entities", explode(dfWNP.col("Edges")));
+
+		dfWNP.show(false);
+		*/
 		
 	}
 }
-class createPairsUdfTest implements UDF1<WrappedArray<WrappedArray<Long>>, ArrayList<long[]>> {
-	private static Logger log = LoggerFactory.getLogger(createPairsUdfTest.class);
 
-	private static final long serialVersionUID = -21621750L;
 
-	@Override
-	public ArrayList<long[]> call(WrappedArray<WrappedArray<Long>> entities) throws Exception {
-		log.debug("-> call({}, {})", entities);
-		
-		ArrayList<long[]> pairs = new ArrayList<long[]>();
-		Combination.printCombination(entities, entities.length(), 2, pairs);
-
-		return pairs;
-	}
-
-}
-
-class Combination {
-
-	/*
-	 * arr[] ---> Input Array data[] ---> Temporary array to store current
-	 * combination start & end ---> Staring and Ending indexes in arr[] index
-	 * ---> Current index in data[] r ---> Size of a combination to be printed
-	 */
-	/*
-	 * arr[] ---> Input Array data[] ---> Temporary array to store current
-	 * combination start & end ---> Staring and Ending indexes in arr[] index
-	 * ---> Current index in data[] r ---> Size of a combination to be printed
-	 */
-	static void combinationUtil(WrappedArray<WrappedArray<Long>> arr, long[] data, int start, int end, int index, int r, ArrayList<long[]> pairs) {
-		// Current combination is ready to be printed, print it
-		if (index == r) {
-			long[] combination = data.clone();
-			pairs.add(combination);
-			return;
-		}
-
-		// replace index with all possible elements. The condition
-		// "end-i+1 >= r-index" makes sure that including one element
-		// at index will make a combination with remaining elements
-		// at remaining positions
-		for (int i = start; i <= end && end - i + 1 >= r - index; i++) {
-			data[index] = arr.apply(i).apply(i);
-			combinationUtil(arr, data, i + 1, end, index + 1, r, pairs);
-		}
-	}
-
-	// The main function that prints all combinations of size r
-	// in arr[] of size n. This function mainly uses combinationUtil()
-	static void printCombination(WrappedArray<WrappedArray<Long>> arr, int n, int r, ArrayList<long[]> pairs) {
-		// A temporary array to store all combination one by one
-		long[] data = new long[r];
-		//ArrayList<Long> data = new ArrayList<Long>(r);
-
-		// Print all combination using temporary array 'data[]'
-		combinationUtil(arr, data, 0, n - 1, 0, r, pairs);
-	}
-}
