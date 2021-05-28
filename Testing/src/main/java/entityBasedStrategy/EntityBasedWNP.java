@@ -12,7 +12,10 @@ import static org.apache.spark.sql.functions.split;
 import static org.apache.spark.sql.functions.callUDF;
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.lit;
+import static org.apache.spark.sql.functions.row_number;
+
 import org.apache.spark.sql.api.java.UDF2;
+import org.apache.spark.sql.expressions.Window;
 import org.apache.spark.sql.types.DataTypes;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,20 +40,27 @@ public class EntityBasedWNP {
 		spark.sparkContext().setLogLevel("ERROR");
 		//spark.udf().register("extractInfo", new extractInfoUdf(),
 		//		DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
-		spark.udf().register("getFrequencies", new getFrequenciesUDF(),
+		spark.udf().register("getFrequencies", new GetFrequenciesUDF(),
 				DataTypes.createArrayType(DataTypes.IntegerType));
 		spark.udf().register("getWeight", new GetWeight(), DataTypes.DoubleType);
 		spark.udf().register("filterNodes", new FilterNodesUDF(), DataTypes.createArrayType(DataTypes.LongType));
 		
-		Dataset<Row> df = spark.read().json("data/blocks.json");
-		System.out.println("Before transformation:");
-		df.show(false);
+		Dataset<Row> df1 = spark.read().format("csv").option("header", "true").load("data/AmazonGoogle/Amazon.csv");
+		
+		
+		df1 = blocking(df1);
+		
+//		Dataset<Row> df = spark.read().json("data/blocks.json");
+//		System.out.println("Before transformation:");
+//		df.show(false);
+//		df.cache();
+//		df.printSchema();
 		
 		/*
 		 * Calculates the cardinality of each block and creates a new column to
 		 * save the data
 		 */
-		Dataset<Row> dfmapped = df.withColumn("ofEntities", size(df.col("entities")))
+		Dataset<Row> dfmapped = df1.withColumn("ofEntities", size(df1.col("entities")))
 				.withColumn("cardinality", expr("int(((ofEntities-1)*ofEntities)/2)")).drop("ofEntities");
 		
 		/*
@@ -95,8 +105,11 @@ public class EntityBasedWNP {
 		dfWNP.show(false);
 		
 		dfWNP = dfWNP.withColumn("numberOfEntities", lit((int)dfWNP.count()));
+		dfWNP.printSchema();
 		// The array frequencies contains for eve
 		dfWNP = dfWNP.withColumn("Frequencies", callUDF("getFrequencies", dfWNP.col("CoOccurrenceBag"), dfWNP.col("numberOfEntities")).cast(DataTypes.createArrayType(DataTypes.LongType))).withColumn("SetOfNeighbors", array_distinct(dfWNP.col("CoOccurrenceBag"))).drop("numberOfEntities");
+		System.out.println("Get Frequencies Done!");
+		
 		dfWNP = dfWNP.withColumn("SetOfNeighborsWithoutID", array_remove(dfWNP.col("SetOfNeighbors"), dfWNP.col("EntityId")));
 		dfWNP = dfWNP.sort("EntityId");
 		dfWNP.show(false);
@@ -135,23 +148,19 @@ public class EntityBasedWNP {
 		dfWNP.show(false);
 		
 	}
-
-}
-
-
-
-class getFrequenciesUDF implements UDF2 <WrappedArray<Long>, Integer, List<Integer>> {
-	
-	private static Logger log = LoggerFactory.getLogger(getFrequenciesUDF.class);
-	private static final long serialVersionUID = -21621754L;
-	
-	public List<Integer> call(WrappedArray<Long> bag, Integer NumberOfEntities) throws Exception {
-		log.debug("-> call({}, {})", bag);
-		List<Integer> frequencies = new ArrayList<Integer>(Collections.nCopies(NumberOfEntities, 0));
-		for(int i = 0; i < bag.length(); i++){
-			frequencies.set((int) (bag.apply(i)-1), frequencies.get((int) (bag.apply(i)-1) ) + 1);
-		}
-		return frequencies;
+	private static Dataset<Row> blocking(Dataset<Row> df){
+		df = df.withColumn("entityid", row_number().over(Window.orderBy(lit(1)))).drop("description").drop("manufacturer").drop("price").drop("id");
+		df = df.withColumn("entityid", df.col("entityid").cast(DataTypes.LongType));
+		df = df.withColumn("title", split(df.col("title"), " "));
+		df = df.withColumn("titleTokens", explode(df.col("title"))).drop("title");
+		df = df.groupBy("titletokens").agg(collect_list("entityid").as("entities"));
+		df = df.withColumn("block", row_number().over(Window.orderBy(lit(1)))).drop("titletokens");
+		df = df.withColumn("block", df.col("block").cast(DataTypes.LongType));
+		df = df.select("block", "entities");
+		df.show(false);
+		df.printSchema();
+		df.cache();
+		return df;
 	}
 
 }

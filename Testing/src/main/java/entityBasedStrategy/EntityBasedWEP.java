@@ -11,6 +11,7 @@ import static org.apache.spark.sql.functions.size;
 import static org.apache.spark.sql.functions.callUDF;
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.lit;
+import static org.apache.spark.sql.functions.row_number;
 import static org.apache.spark.sql.functions.split;
 
 import java.util.ArrayList;
@@ -20,6 +21,7 @@ import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
+import org.apache.spark.sql.expressions.Window;
 
 public class EntityBasedWEP {
 
@@ -33,15 +35,19 @@ public class EntityBasedWEP {
 		spark.udf().register("getNumberOfEdgesWEP", new GetNumberOfEdgesWEP(), DataTypes.LongType);
 		spark.udf().register("getWeightListWEP", new GetWeightListWEP(), DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.DoubleType)));
 
-		Dataset<Row> df = spark.read().json("data/blocks.json");
+//		Dataset<Row> df = spark.read().json("data/blocks.json");
+		Dataset<Row> df1 = spark.read().format("csv").option("header", "true").load("data/AmazonGoogle/Amazon.csv");
+		
+		
+		df1 = blocking(df1);
 		System.out.println("Before transformation:");
-		df.show(false);
+		df1.show(false);
 
 		/*
 		 * Calculates the cardinality of each block and creates a new column to save the
 		 * data
 		 */
-		Dataset<Row> dfmapped = df.withColumn("ofEntities", size(df.col("entities")))
+		Dataset<Row> dfmapped = df1.withColumn("ofEntities", size(df1.col("entities")))
 				.withColumn("cardinality", expr("int(((ofEntities-1)*ofEntities)/2)")).drop("ofEntities");
 
 		/*
@@ -147,6 +153,20 @@ public class EntityBasedWEP {
 				.drop("jEntity_Weight").drop("EntityId");
 		dfWEP.select("Edge", "Weight").show(false);
 
+	}
+	private static Dataset<Row> blocking(Dataset<Row> df){
+		df = df.withColumn("entityid", row_number().over(Window.orderBy(lit(1)))).drop("description").drop("manufacturer").drop("price").drop("id");
+		df = df.withColumn("entityid", df.col("entityid").cast(DataTypes.LongType));
+		df = df.withColumn("title", split(df.col("title"), " "));
+		df = df.withColumn("titleTokens", explode(df.col("title"))).drop("title");
+		df = df.groupBy("titletokens").agg(collect_list("entityid").as("entities"));
+		df = df.withColumn("block", row_number().over(Window.orderBy(lit(1)))).drop("titletokens");
+		df = df.withColumn("block", df.col("block").cast(DataTypes.LongType));
+		df = df.select("block", "entities");
+		df.show(false);
+		df.printSchema();
+		df.cache();
+		return df;
 	}
 
 }
