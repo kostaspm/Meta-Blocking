@@ -15,7 +15,9 @@ public class createPairsUdf implements UDF1<WrappedArray<Long>, ArrayList<ArrayL
 	public ArrayList<ArrayList<Long>> call(WrappedArray<Long> entities) throws Exception {
 		log.debug("-> call({}, {})", entities);
 		ArrayList<ArrayList<Long>> pairs = new ArrayList<ArrayList<Long>>();
-
+		if(entities.length() == 1){
+			
+		}
 		for (int i = 0; i < entities.length(); i++) {
 			Long num1 = entities.apply(i);
 			for (int j = i + 1; j < entities.length(); j++) {
