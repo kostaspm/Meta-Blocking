@@ -16,9 +16,9 @@ public 	class GetFrequenciesUDF implements UDF2 <WrappedArray<Long>, Integer, Li
 	private static final long serialVersionUID = -21621754L;
 	
 
-	public List<Integer> call(WrappedArray<Long> bag, Integer NumberOfEntities) throws Exception {
+	public List<Integer> call(WrappedArray<Long> bag, Integer maxElement) throws Exception {
 		log.debug("-> call({}, {})", bag);
-		List<Integer> frequencies = new ArrayList<Integer>(Collections.nCopies(NumberOfEntities, 0));
+		List<Integer> frequencies = new ArrayList<Integer>(Collections.nCopies(maxElement, 0));
 		for(int i = 0; i < bag.length(); i++){
 			frequencies.set((int) (bag.apply(i)-1), frequencies.get((int) (bag.apply(i)-1) ) + 1);
 		}

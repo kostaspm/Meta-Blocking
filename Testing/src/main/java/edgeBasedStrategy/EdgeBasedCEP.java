@@ -46,6 +46,8 @@ public class EdgeBasedCEP {
 
 		Dataset<Row> dfUnion = dfAmazon.union(dfGoogle);
 		Dataset<Row> dfBlocked = blocking(dfUnion);
+		int BlockSize = (int) dfBlocked.count();
+		
 		double indexOfWminDouble = (double) dfBlocked.agg(expr("sum(size(entities)/2)")).first().get(0);
 		int indexOfWminInt = (int) indexOfWminDouble;
 		System.out.println("========================== " + indexOfWminInt);
@@ -56,7 +58,7 @@ public class EdgeBasedCEP {
 				"==============================================================================================");
 		// Stage 2: Preprocessing
 
-		Dataset<Row> dfnodes = preprocessing(dfmapped);
+		Dataset<Row> dfnodes = preprocessing(dfmapped, BlockSize);
 		dfnodes.cache();
 		dfnodes.show(false);
 
@@ -94,8 +96,8 @@ public class EdgeBasedCEP {
 
 	private static Dataset<Row> blockFiltering(Dataset<Row> df) {
 		/*
-		 * Calculates the cardinality of each block and creates a new column to
-		 * save the data
+		 * Calculates the cardinality of each block and creates a new column to save the
+		 * data
 		 */
 		df = df.withColumn("ofEntities", size(df.col("entities")))
 				.withColumn("cardinality", expr("int(((ofEntities-1)*ofEntities)/2)")).drop("ofEntities");
@@ -105,40 +107,25 @@ public class EdgeBasedCEP {
 		 */
 		df = df.sort(df.col("cardinality").asc()).withColumn("entityId", explode(df.col("entities"))).drop("entities");
 		/*
-		 * Groups data by entityID to get rid of duplicates and collect in a
-		 * list the blocks that are associated with
+		 * Groups data by entityID to get rid of duplicates and collect in a list the
+		 * blocks that are associated with
 		 */
 		df = df.groupBy("entityId").agg(collect_list(df.col("block")).alias("AssociatedBlocks"))
 				.sort(df.col("entityId").asc());
 		return df;
 	}
 
-private static Dataset<Row> preprocessing(Dataset<Row> df) {
-		
-		// switch(selectedScheme){
-				// case 1:
-				// //preprocessingARCS();
-				// break;
-				// case 2:
-				// //preprocessingCBS();
-				// break;
-				// case 3:
-				// //preprocessingECBS();
-				// break;
-				// case 4:
-				// preprocessingJS();
-				// break;
-				// case 5:
-				// //reprocessingEJS();
-				// break;
-				// }
-		
+	private static Dataset<Row> preprocessing(Dataset<Row> df, int BlockSize) {
+		int scheme = 3;
+		/*
+		 * 1 = ARCS 2 = CBS 3 = ECBS 4 = JS
+		 */
+
 		// ==================================================== Map 1
 		// Counts the number of blocks in each Entity and breaks the list of
 		// blocks
 		df = df.withColumn("NumberOfBlocks", size(df.col("AssociatedBlocks"))).withColumn("AssociatedBlocks",
 				explode(df.col("AssociatedBlocks")));
-
 		// df.show(false);
 
 		// Creates an 1x2 array with entity and number of associated blocks (we
@@ -146,84 +133,110 @@ private static Dataset<Row> preprocessing(Dataset<Row> df) {
 
 		df = df.withColumn("entity,numberofBlocks", struct(df.col("entityId"), df.col("NumberOfBlocks")))
 				.drop("entityId").drop("NumberOfBlocks").withColumnRenamed("AssociatedBlocks", "BlockId");
-		//df = df.sort(df.col("BlockId").asc());
+		// df = df.sort(df.col("BlockId").asc());
 		// df.show(false);
 		// df.printSchema();
 
 		// Groups the columns according the BlockId and creates a list of lists
 		// with the EntityId and Number of associated blocks
 
-		df = df.groupBy("BlockId")
-				.agg(collect_list(df.col("entity,numberofBlocks")).alias("Entity_BlockNumberList"))
+		df = df.groupBy("BlockId").agg(collect_list(df.col("entity,numberofBlocks")).alias("Entity_BlockNumberList"))
 				.sort(df.col("BlockId").asc());
-		// dfreduced.show(false);
-		// dfreduced.printSchema();
+//		df.show(false);
 
 		// ==================================================== Reduce 1
 		// Uses the UDF createPairsUdf and extractInfoUdf and creates 2 columns
 		// with the unique pairs in every block and the useful information for
 		// the weight computation
 
-		df = df
-				.withColumn("PairsList", callUDF("createPairs", col("Entity_BlockNumberList.entityId")))
-				.drop("BlockId");
-		// df1.show(false);
+		df = df.withColumn("PairsList", callUDF("createPairs", col("Entity_BlockNumberList.entityId"))).drop("BlockId");
+//		df.show(false);
+		if (scheme == 1) {
 
-		Dataset<Row> df1Test = df.withColumn("PairsList", explode(df.col("PairsList")));
+			df = df.withColumn("Cardinality", size(df.col("PairsList")));
+			df = df.withColumn("PairsList", explode(df.col("PairsList")));
+			df = df.groupBy("PairsList").agg(sum(expr("1/Cardinality")).as("Weight"));
+			df = df.withColumnRenamed("PairsList", "Node");
+//			df.show();
+			return df;
 
-		df = df
-				.withColumn("NumberOfBlocks1_NumberOfBlocks2",
+		} else {
+			Dataset<Row> df1Test = df.withColumn("PairsList", explode(df.col("PairsList")));
+//			df.show(false);
+
+			if (scheme != 2) {
+				df = df.withColumn("NumberOfBlocks1_NumberOfBlocks2",
 						callUDF("extractInfo", col("Entity_BlockNumberList.NumberOfBlocks")))
-				.drop("Entity_BlockNumberList");
-		// df1.show(false);
-		// df1.printSchema();
+						.drop("Entity_BlockNumberList");
+//				df.show(false);
 
-		String transform_expr = "transform(PairsList, (x, i) -> struct(x as element1, NumberOfBlocks1_NumberOfBlocks2[i] as element2))";
-		df = df.withColumn("merged_arrays", explode(expr(transform_expr)))
-				.withColumn("Edges", col("merged_arrays.element1"))
-				.withColumn("NumberOfBlocks", col("merged_arrays.element2")).drop("merged_arrays").drop("PairsList")
-				.drop("NumberOfBlocks1_NumberOfBlocks2");
+				String transform_expr = "transform(PairsList, (x, i) -> struct(x as element1, NumberOfBlocks1_NumberOfBlocks2[i] as element2))";
+				df = df.withColumn("merged_arrays", explode(expr(transform_expr)))
+						.withColumn("Edges", col("merged_arrays.element1"))
+						.withColumn("NumberOfBlocks", col("merged_arrays.element2")).drop("merged_arrays")
+						.drop("PairsList").drop("NumberOfBlocks1_NumberOfBlocks2");
 
-		// df1.show(false);
-		df = df.dropDuplicates("Edges", "NumberOfBlocks");
-		// df1.show(false);
+				df = df.dropDuplicates("Edges", "NumberOfBlocks");
+			}
 
-		// Counts how many times there is a pair among all blocks.
-		// So it is the commong blocks between two entities
-		System.out.println("Common blocks");
-		df1Test = df1Test.groupBy("PairsList").count();
-		// df1Test.show(false);
+			// Counts how many times there is a pair among all blocks.
+			// So it is the common blocks between two entities
+			System.out.println("Common blocks");
+			df1Test = df1Test.groupBy("PairsList").count();
 
-		df1Test = df1Test.join(df, df1Test.col("PairsList").equalTo(df.col("Edges")));
-		df1Test = df1Test.withColumn("iEntityNumberOfBlocks", col("NumberOfBlocks").getItem(0))
-				.withColumn("jEntityNumberOfBlocks", col("NumberOfBlocks").getItem(1)).drop("NumberOfBlocks")
-				.drop("PairsList");
-		df1Test = df1Test.select(col("Edges").as("Node"), col("iEntityNumberOfBlocks"), col("jEntityNumberOfBlocks"),
-				col("count").as("CommonBlocks"));
+			if (scheme == 2) {
+				df1Test = df1Test.withColumnRenamed("count", "Weight").withColumnRenamed("PairsList", "Node");
+			} else {
+				df1Test = df1Test.join(df, df1Test.col("PairsList").equalTo(df.col("Edges")));
+//				df1Test.show(false);
 
-		// df1Test.show(false);
+				df1Test = df1Test.withColumn("iEntityNumberOfBlocks", col("NumberOfBlocks").getItem(0))
+						.withColumn("jEntityNumberOfBlocks", col("NumberOfBlocks").getItem(1)).drop("NumberOfBlocks")
+						.drop("PairsList");
+				df1Test = df1Test.select(col("Edges").as("Node"), col("iEntityNumberOfBlocks"),
+						col("jEntityNumberOfBlocks"), col("count").as("CommonBlocks"));
+//				df1Test.show(false);
+				// df1Test.show(false);
 
-		// I need to find how to combine with other information
+				// I need to find how to combine with other information
 
-		// Job 2 Weight Calculation
-		Dataset<Row> dfnodes = df1Test
-				.withColumn("JaccardWeight",
-						expr("double(CommonBlocks) / (double(iEntityNumberOfBlocks) + double(jEntityNumberOfBlocks) - double(CommonBlocks))"))
-				.drop("iEntityNumberOfBlocks").drop("jEntityNumberOfBlocks").drop("CommonBlocks");
-		// dfnodes.cache();
-		// dfnodes.show(false);
-		return dfnodes;
+				switch (scheme) {
+				case 3:
+					// ECBS
+					df1Test = df1Test.withColumn("BlockSize", lit(BlockSize));
+					df1Test = df1Test.withColumn("Weight", expr(
+							"double(CommonBlocks) * log10(double(BlockSize) / double(iEntityNumberOfBlocks)) * log10(double(BlockSize) / double(jEntityNumberOfBlocks))"))
+							.drop("iEntityNumberOfBlocks").drop("jEntityNumberOfBlocks").drop("CommonBlocks")
+							.drop("BlockSize");
+
+					break;
+				case 4:
+					// JS();
+					df1Test = df1Test.withColumn("Weight", expr(
+							"double(CommonBlocks) / (double(iEntityNumberOfBlocks) + double(jEntityNumberOfBlocks) - double(CommonBlocks))"))
+							.drop("iEntityNumberOfBlocks").drop("jEntityNumberOfBlocks").drop("CommonBlocks");
+					break;
+
+				}
+			}
+
+			df1Test.printSchema();
+			// dfnodes.cache();
+			// dfnodes.show(false);
+			return df1Test;
+		}
+
 	}
 
 	private static Dataset<Row> cepPruning(Dataset<Row> df, int index) {
-		Dataset<Row> dfnodesCEPcount = df.drop("Node").sort(df.col("JaccardWeight").desc());
+		Dataset<Row> dfnodesCEPcount = df.drop("Node").sort(df.col("Weight").desc());
 		dfnodesCEPcount.show(false);
 
 		dfnodesCEPcount = dfnodesCEPcount.withColumn("count", row_number().over(Window.orderBy(lit(1))));
-		dfnodesCEPcount = dfnodesCEPcount.filter(col("count").equalTo(index)).select("JaccardWeight"); // equal to the K
+		dfnodesCEPcount = dfnodesCEPcount.filter(col("count").equalTo(index)).select("Weight"); // equal to the K
 		double valueOfMinWeight = dfnodesCEPcount.head().getDouble(0);
 
-		df = df.filter(col("JaccardWeight").geq(valueOfMinWeight)).select("node", "JaccardWeight");
+		df = df.filter(col("Weight").geq(valueOfMinWeight)).select("node", "Weight");
 		return df;
 	}
 }

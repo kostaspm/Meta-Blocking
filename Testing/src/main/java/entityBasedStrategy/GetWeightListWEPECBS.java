@@ -2,17 +2,17 @@ package entityBasedStrategy;
 
 import java.util.ArrayList;
 
-import org.apache.spark.sql.api.java.UDF6;
+import org.apache.spark.sql.api.java.UDF7;
 
 import scala.collection.mutable.WrappedArray;
 
-public class GetWeightListWEP implements UDF6 <WrappedArray<Long>, WrappedArray<Long>, WrappedArray<Long>, Long, Double, Long, ArrayList<ArrayList<Double>>> {
+public class GetWeightListWEPECBS implements UDF7 <WrappedArray<Long>, WrappedArray<Long>, WrappedArray<Long>, Long, Double, Long, Integer, ArrayList<ArrayList<Double>>> {
 	/**
 	 * 
 	 */
 	private static final long serialVersionUID = -8618285765926468296L;
 
-	public ArrayList<ArrayList<Double>> call(WrappedArray<Long> frequencies, WrappedArray<Long> jEntities, WrappedArray<Long> NumberOfBlocks, Long iEntity, Double totalWeight, Long numberOfEdges) throws Exception {
+	public ArrayList<ArrayList<Double>> call(WrappedArray<Long> frequencies, WrappedArray<Long> jEntities, WrappedArray<Long> NumberOfBlocks, Long iEntity, Double totalWeight, Long numberOfEdges, Integer BlockSize) throws Exception {
 		
 		ArrayList<Double> weightList = new ArrayList<Double>();
 		ArrayList<ArrayList<Double>> list = new ArrayList<ArrayList<Double>>();
@@ -24,7 +24,8 @@ public class GetWeightListWEP implements UDF6 <WrappedArray<Long>, WrappedArray<
 				Double iCardinality = (double) NumberOfBlocks.apply(iEntity.intValue() - 1);
 				Double jCardinality = (double) NumberOfBlocks.apply(jEntities.apply(i).intValue() - 1);
 				
-				double currentWeight = jaccardScheme(iCardinality, jCardinality, commonBlocks);
+				Double currentWeight = commonBlocks * Math.log10(BlockSize / iCardinality)
+						* Math.log10(BlockSize / jCardinality);
 				double finalWeight = totalWeight/numberOfEdges;
 				if(currentWeight > finalWeight) {
 					weightList.add((double)jEntities.apply(i));
@@ -36,11 +37,5 @@ public class GetWeightListWEP implements UDF6 <WrappedArray<Long>, WrappedArray<
 		
 		return list;
 	}
-	
-	private double jaccardScheme(Double iCardinality, Double jCardinality, Double commonBlocks){
-		double weight = commonBlocks/(iCardinality + jCardinality - commonBlocks);
-		return weight;
-	}
-
 }
 

@@ -8,7 +8,7 @@ import org.slf4j.LoggerFactory;
 
 import scala.collection.mutable.WrappedArray;
 
-public class GetWeightCNP implements UDF4 <WrappedArray<Long>, WrappedArray<Long>, WrappedArray<Long>, Long, ArrayList<Double>> {
+public class GetWeightCNPJaccard implements UDF4 <WrappedArray<Long>, WrappedArray<Long>, WrappedArray<Long>, Long, ArrayList<Double>> {
 	
 	private static Logger log = LoggerFactory.getLogger(getFrequencies.class);
 	private static final long serialVersionUID = -21621754L;

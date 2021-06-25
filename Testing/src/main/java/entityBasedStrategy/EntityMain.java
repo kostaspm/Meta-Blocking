@@ -38,7 +38,7 @@ public class EntityMain {
 		//		DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 		spark.udf().register("getFrequencies", new getFrequencies(),
 				DataTypes.createArrayType(DataTypes.IntegerType));
-		spark.udf().register("getWeight", new GetWeight(), DataTypes.DoubleType);
+		spark.udf().register("getWeight", new GetWeightWNPJaccard(), DataTypes.DoubleType);
 		
 		Dataset<Row> df = spark.read().json("data/blocks.json");
 		System.out.println("Before transformation:");

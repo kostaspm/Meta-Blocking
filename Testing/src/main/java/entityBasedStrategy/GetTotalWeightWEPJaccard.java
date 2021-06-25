@@ -4,10 +4,8 @@ import org.apache.spark.sql.api.java.UDF4;
 
 import scala.collection.mutable.WrappedArray;
 
-public class GetTotalWeightWEP implements UDF4 <WrappedArray<Long>, WrappedArray<Long>, WrappedArray<Long>, Long, Double> {
-	/**
-	 * 
-	 */
+public class GetTotalWeightWEPJaccard implements UDF4 <WrappedArray<Long>, WrappedArray<Long>, WrappedArray<Long>, Long, Double> {
+
 	private static final long serialVersionUID = -7469620826868963887L;
 
 	public Double call(WrappedArray<Long> frequencies, WrappedArray<Long> jEntities, WrappedArray<Long> NumberOfBlocks, Long iEntity) throws Exception {

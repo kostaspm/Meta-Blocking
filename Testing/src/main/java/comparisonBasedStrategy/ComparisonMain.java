@@ -31,7 +31,7 @@ public class ComparisonMain {
 		spark.sparkContext().setLogLevel("ERROR");
 		spark.udf().register("CommonBlocksUdfWNP", new CalculateCommonBlocksUDF(), DataTypes.createArrayType(DataTypes.LongType));
 		spark.udf().register("BlockSizeUdfWNP", new CalculateBlockSizeUDF(), DataTypes.createArrayType(DataTypes.LongType));
-		spark.udf().register("GetWeightUdfWNP", new GetWeightWNPUDF(), DataTypes.createArrayType(DataTypes.DoubleType));
+		spark.udf().register("GetWeightUdfWNP", new GetWeightUDFJaccard(), DataTypes.createArrayType(DataTypes.DoubleType));
 		spark.udf().register("CreateNodePairs", new createPairsUdf(), DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 		
 		Dataset<Row> df = spark.read().json("data/blocks.json");
