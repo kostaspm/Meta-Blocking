@@ -25,16 +25,22 @@ import org.apache.spark.sql.types.DataTypes;
 public class EdgeBasedWNP {
 
 	public static void main(String[] args) {
-
 		SparkSession spark = SparkSession.builder().appName("Edge Based Strategy").config("spark.master", "local")
 				.getOrCreate();
 
 		spark.sparkContext().setLogLevel("ERROR");
-		Dataset<Row> df = spark.read().json("data/blocks.json");
+		//Dataset<Row> df = spark.read().json("input/blocks.json");
 		Dataset<Row> dfAmazon = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Amazon.csv");
+				.load("input/AmazonGoogle/Amazon.csv");
 		Dataset<Row> dfGoogle = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Google.csv");
+				.load("input/AmazonGoogle/Google.csv");
+//		Dataset<Row> dfBuy = spark.read().format("csv").option("header", "true")
+//				.load("data/AbtBuy/Buy.csv");
+//		Dataset<Row> dfAbt = spark.read().format("csv").option("header", "true")
+//				.load("data/AbtBuy/Abt.csv");
+//		dfBuy = dfBuy.drop("manufacturer");
+		
+		
 		spark.udf().register("createPairs", new createPairsUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 		spark.udf().register("extractInfo", new extractInfoUdf(),
@@ -44,17 +50,17 @@ public class EdgeBasedWNP {
 		Dataset<Row> dfUnion = dfAmazon.union(dfGoogle);
 		Dataset<Row> dfBlocked = blocking(dfUnion);
 
-		int BlockSize = (int) df.count();
-//		int BlockSize = (int) dfBlocked.count();
+//		int BlockSize = (int) df.count();
+		int BlockSize = (int) dfBlocked.count();
 		// Stage 1: Block Filtering
-		Dataset<Row> dfmapped = blockFiltering(df);
+		Dataset<Row> dfmapped = blockFiltering(dfBlocked);
 		// dfmapped.show(false);
 		System.out.println(
 				"==============================================================================================");
 		// Stage 2: Preprocessing
 
-		Dataset<Row> dfnodes = preprocessing(dfmapped, BlockSize);
-		dfnodes.show(false);
+		Dataset<Row> dfnodes = preprocessing(dfmapped, BlockSize, Integer.parseInt(args[0]));
+		//dfnodes.show(false);
 		dfnodes.cache();
 		// dfnodes.sort(dfnodes.col("JaccardWeight").desc()).show(false);
 
@@ -74,8 +80,10 @@ public class EdgeBasedWNP {
 		System.out.println(
 				"==================================================================================================================");
 	}
-
+	
 	private static Dataset<Row> blocking(Dataset<Row> df) {
+//		df = df.withColumnRenamed("name", "title");
+		
 		df = df.withColumn("title", lower(df.col("title")))
 				.withColumn("entityid", row_number().over(Window.orderBy(lit(1)))).drop("description")
 				.drop("manufacturer").drop("price").drop("id");
@@ -87,7 +95,7 @@ public class EdgeBasedWNP {
 		df = df.withColumn("block", df.col("block").cast(DataTypes.LongType));
 		df = df.select("block", "entities");
 		df = df.withColumn("entities", array_distinct(df.col("entities")));
-		df.show(false);
+		//df.show(false);
 		df.printSchema();
 		df.cache();
 		return df;
@@ -114,8 +122,8 @@ public class EdgeBasedWNP {
 		return df;
 	}
 
-	private static Dataset<Row> preprocessing(Dataset<Row> df, int BlockSize) {
-		int scheme = 3;
+	private static Dataset<Row> preprocessing(Dataset<Row> df, int BlockSize, int scheme) {
+		//int scheme = 4;
 		/*
 		 * 1 = ARCS 2 = CBS 3 = ECBS 4 = JS
 		 */
@@ -201,6 +209,7 @@ public class EdgeBasedWNP {
 
 				switch (scheme) {
 				case 3:
+					//df1Test.show(false);
 					// ECBS
 					df1Test = df1Test.withColumn("BlockSize", lit(BlockSize));
 					df1Test = df1Test.withColumn("Weight", expr(

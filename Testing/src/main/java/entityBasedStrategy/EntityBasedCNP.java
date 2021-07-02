@@ -50,16 +50,15 @@ public class EntityBasedCNP {
 
 		spark.udf().register("filterNodes", new FilterNodesUDF(), DataTypes.createArrayType(DataTypes.LongType));
 
-		Dataset<Row> df = spark.read().json("data/blocks.json");
+		//Dataset<Row> df = spark.read().json("input/blocks.json");
 		Dataset<Row> dfAmazon = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Amazon.csv");
-
+				.load("input/AmazonGoogle/Amazon.csv");
 		Dataset<Row> dfGoogle = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Google.csv");
+				.load("input/AmazonGoogle/Google.csv");
 		Dataset<Row> dfUnion = dfAmazon.union(dfGoogle);
 		Dataset<Row> dfBlocked = blocking(dfUnion);
 
-		Dataset<Row> dfFiltered = blockFiltering(df);
+		Dataset<Row> dfFiltered = blockFiltering(dfBlocked);
 
 		Dataset<Row> dfPreprocessing = preprocessing(dfFiltered);
 
@@ -69,12 +68,12 @@ public class EntityBasedCNP {
 		dftest = dftest.groupBy("entities").count();
 		int entityCollection = (int) dftest.count();
 		dfForIndex = dfForIndex.withColumn("entityCollection", lit(entityCollection));
-		double indexOfkTopElementsDouble = (double) dfForIndex.agg(expr("sum(size(entities)/(entityCollection-1))"))
-				.first().get(0);
+		double indexOfkTopElementsDouble = dfForIndex.agg(expr("sum(size(entities)/(entityCollection-1))"))
+				.first().getDouble(0);
 		int indexOfkTopElementsInt = (int) indexOfkTopElementsDouble;
 		// =================================================================
 
-		Dataset<Row> dfPruned = cnpPruning(dfPreprocessing, dfFiltered, indexOfkTopElementsInt);
+		Dataset<Row> dfPruned = cnpPruning(dfPreprocessing, dfFiltered, indexOfkTopElementsInt, Integer.parseInt(args[0]));
 		dfPruned.show(false);
 	}
 
@@ -90,8 +89,8 @@ public class EntityBasedCNP {
 		df = df.withColumn("block", df.col("block").cast(DataTypes.LongType));
 		df = df.select("block", "entities");
 		df = df.withColumn("entities", array_distinct(df.col("entities")));
-		df.show(false);
-		df.printSchema();
+		//df.show(false);
+		//df.printSchema();
 		df.cache();
 		return df;
 	}
@@ -127,7 +126,7 @@ public class EntityBasedCNP {
 		df = df.groupBy("BlockId").agg(collect_list("entityId").as("EntityList"));
 		df = df.withColumn("listSize", size(df.col("EntityList")));
 		df = df.filter(col("listSize").geq(2)).drop("listSize");
-		df.show(false);
+		//df.show(false);
 		System.out.println("End of Preprocessing");
 
 		System.out
@@ -135,37 +134,37 @@ public class EntityBasedCNP {
 		return df;
 	}
 
-	private static Dataset<Row> cnpPruning(Dataset<Row> df, Dataset<Row> dfTest, int index) {
-		int scheme = 1;
+	private static Dataset<Row> cnpPruning(Dataset<Row> df, Dataset<Row> dfTest, int index, int scheme) {
+		//int scheme = 1;
 
 		if (scheme == 1) {
-			df.show(false);
+			//df.show(false);
 			df = df.withColumn("Cardinality", expr("int(((size(EntityList)-1)*size(EntityList))/2)"));
-			df.show(false);
+			//df.show(false);
 			df = df.withColumn("PairsList", callUDF("createPairs", df.col("EntityList")));
-			df.show(false);
+			//df.show(false);
 			df = df.withColumn("PairsList", explode(df.col("PairsList")));
-			df.show(false);
+			//df.show(false);
 			df = df.groupBy("PairsList").agg(sum(expr("1/Cardinality")).as("Weight"),
 					collect_list("BlockId").as("BlockId"));
-			df.show(false);
+			//df.show(false);
 			df = df.withColumn("BlockId", explode(df.col("BlockId")));
 
 			df = df.withColumn("iEntityId", df.col("PairsList").getItem(0))
 					.withColumn("jEntityId", df.col("PairsList").getItem(1)).sort(df.col("Weight").desc())
 					.drop("PairsList");
-			df.show(false);
+			//df.show(false);
 			df = df.groupBy("BlockId").agg(collect_list("iEntityId").as("iEntityId"),
 					collect_list("jEntityId").as("jEntityId"), collect_list("Weight").as("Weight"));
-			df.show(false);
-			df = df.withColumn("iEntityId", slice(df.col("iEntityId"), 1, 2))
-					.withColumn("jEntityId", slice(df.col("jEntityId"), 1, 2))
-					.withColumn("Weight", slice(df.col("Weight"), 1, 2)).drop("BlockId");
-			df.show(false);
+			//df.show(false);
+			df = df.withColumn("iEntityId", slice(df.col("iEntityId"), 1, index))
+					.withColumn("jEntityId", slice(df.col("jEntityId"), 1, index))
+					.withColumn("Weight", slice(df.col("Weight"), 1, index)).drop("BlockId");
+			//df.show(false);
 			df = df.withColumn("Filtered",
 					callUDF("filterNodesARCS", df.col("iEntityId"), df.col("jEntityId"), df.col("Weight")))
 					.drop("iEntityId").drop("jEntityId").drop("Weight");
-			df.show(false);
+			//df.show(false);
 			df = df.withColumn("Filtered", explode(df.col("Filtered")));
 			df = df.withColumn("Edge",
 					array(df.col("Filtered").getItem(0).cast(DataTypes.LongType),
@@ -182,7 +181,7 @@ public class EntityBasedCNP {
 		df = df.groupBy("EntityId").agg(flatten(collect_list("CoOccurrenceBag")).as("CoOccurrenceBag"));
 
 		df = df.withColumn("maxElement", array_max(df.col("CoOccurrenceBag")));
-		long maxelement = (long) df.select("maxElement").sort(df.col("maxElement").desc()).head().get(0);
+		long maxelement = df.select("maxElement").sort(df.col("maxElement").desc()).head().getLong(0);
 		df = df.withColumn("maxElement", lit((int) maxelement));
 //		df.show(false);
 		// The array frequencies contains for eve
@@ -215,12 +214,12 @@ public class EntityBasedCNP {
 
 		df = df.orderBy(desc("Weight")).groupBy("EntityId").agg(collect_list(df.col("jEntity")).as("jEntityList"),
 				collect_list(df.col("Weight")).as("weightsList"));
-		df.show(false);
+		//df.show(false);
 		df = df.withColumn("jEntityList", slice(df.col("jEntityList"), 1, index)).withColumn("weightsList",
 				slice(df.col("weightsList"), 1, index)); // change 3rd argument to
 															// match the Top k
 															// weights
-		df.show(false);
+		//df.show(false);
 		df = df.withColumn("merged_arrays",
 				explode(expr("transform(jEntityList, (x, i) -> struct(x as element1, weightsList[i] as element2))")))
 				.withColumn("jEntity", col("merged_arrays.element1"))
@@ -241,12 +240,15 @@ public class EntityBasedCNP {
 		List<Row> test = dfTest.select("arraysize").collectAsList();
 
 		ArrayList<Integer> testlist = new ArrayList<Integer>();
-		test.forEach(m -> testlist.add((Integer) m.get(0)));
+		for(Row item : test) {
+			testlist.add((Integer)item.get(0));
+		}
+//		test.forEach(m -> testlist.add((Integer) m.get(0)));
 //		dfTest.show(false);
 
 		String str = testlist.toString();
 		str = str.substring(1, str.length() - 1);
-		System.out.println(str);
+		//System.out.println(str);
 
 		df = df.withColumn("NumberOfBlocks", split(lit(str), ", ").cast(DataTypes.createArrayType(DataTypes.LongType)));
 		// ================================================================================================
@@ -285,12 +287,15 @@ public class EntityBasedCNP {
 		List<Row> test = dfTest.select("arraysize").collectAsList();
 
 		ArrayList<Integer> testlist = new ArrayList<Integer>();
-		test.forEach(m -> testlist.add((Integer) m.get(0)));
+		for(Row item : test) {
+			testlist.add((Integer)item.get(0));
+		}
+//		test.forEach(m -> testlist.add((Integer) m.get(0)));
 //		dfTest.show(false);
 
 		String str = testlist.toString();
 		str = str.substring(1, str.length() - 1);
-		System.out.println(str);
+		//System.out.println(str);
 
 		df = df.withColumn("NumberOfBlocks", split(lit(str), ", ").cast(DataTypes.createArrayType(DataTypes.LongType)));
 		// ================================================================================================

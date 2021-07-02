@@ -44,21 +44,22 @@ public class ComparisonBasedCEP {
 		spark.udf().register("CreateNodePairs", new createPairsUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 
-		Dataset<Row> df = spark.read().json("data/blocks.json");
+		//Dataset<Row> df = spark.read().json("input/blocks.json");
 		Dataset<Row> dfAmazon = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Amazon.csv");
+				.load("input/AmazonGoogle/Amazon.csv");
 		Dataset<Row> dfGoogle = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Google.csv");
+				.load("input/AmazonGoogle/Google.csv");
 		Dataset<Row> dfUnion = dfAmazon.union(dfGoogle);
 		Dataset<Row> dfBlocked = blocking(dfUnion);
 
-		double indexOfWminDouble = (double) dfBlocked.agg(expr("sum(size(entities)/2)")).first().get(0);
+		double indexOfWminDouble = dfBlocked.agg(expr("sum(size(entities)/2)")).first().getDouble(0);
 		int indexOfWminInt = (int) indexOfWminDouble;
 
 		Dataset<Row> dfmapped = blockFiltering(dfBlocked);
 		Dataset<Row> dfPreprocessing = preprocessing(dfmapped);
-		Dataset<Row> dfCEP = cepPruning(dfPreprocessing, indexOfWminInt);
-		dfCEP.show(false);
+		Dataset<Row> dfCEP = cepPruning(dfPreprocessing, indexOfWminInt, Integer.parseInt(args[0]));
+		dfCEP.sort(dfCEP.col("Weight")).show(false);
+		spark.close();
 
 	}
 
@@ -74,8 +75,8 @@ public class ComparisonBasedCEP {
 		df = df.withColumn("block", df.col("block").cast(DataTypes.LongType));
 		df = df.select("block", "entities");
 		df = df.withColumn("entities", array_distinct(df.col("entities")));
-		df.show(false);
-		df.printSchema();
+		//df.show(false);
+		//df.printSchema();
 		df.cache();
 		return df;
 	}
@@ -115,8 +116,8 @@ public class ComparisonBasedCEP {
 		return df;
 	}
 
-	private static Dataset<Row> cepPruning(Dataset<Row> df, int index) {
-		int scheme = 1;
+	private static Dataset<Row> cepPruning(Dataset<Row> df, int index,int scheme) {
+		//int scheme = 1;
 		if (scheme == 1) {
 //				df = df.withColumn("Cardinality", expr("int(((size(EntityId_AssociatedBlocks)-1)*size(EntityId_AssociatedBlocks))/2)"));
 			df = df.withColumn("EntityIdList", df.col("EntityId_AssociatedBlocks.entityId"));
@@ -132,11 +133,12 @@ public class ComparisonBasedCEP {
 					collect_list("BlockId").as("BlockId"));
 //				df.show(false);
 			df = df.withColumn("BlockId", explode(df.col("BlockId")));
-			df.show(false);
+			//df.show(false);
 
 //				df.show(false);
 //				df.cache();
 			df = df.withColumnRenamed("Edges2", "Edges");
+			df = df.dropDuplicates();
 //				df = df.groupBy("BlockId").agg(collect_list(df.col("Edges2")).as("Edges"), collect_list("Weight").as("WeightsList"));
 //				df.show(false);
 		} else {
@@ -181,8 +183,9 @@ public class ComparisonBasedCEP {
 		Dataset<Row> dfCEPcount = df.withColumn("count", row_number().over(Window.orderBy(lit(1))));
 		dfCEPcount = dfCEPcount.filter(col("count").equalTo(index)).select("Weight");
 		double valueOfMinWeight = dfCEPcount.first().getDouble(0);
-
+		
 		df = df.filter(col("Weight").geq(valueOfMinWeight)).select("Edges", "Weight");
+		df = df.dropDuplicates();
 
 		return df;
 	}

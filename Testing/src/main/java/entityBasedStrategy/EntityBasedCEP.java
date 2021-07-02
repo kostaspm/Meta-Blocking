@@ -14,7 +14,6 @@ import static org.apache.spark.sql.functions.callUDF;
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.lit;
 import static org.apache.spark.sql.functions.lower;
-import static org.apache.spark.sql.functions.monotonically_increasing_id;
 import static org.apache.spark.sql.functions.row_number;
 import static org.apache.spark.sql.functions.split;
 import static org.apache.spark.sql.functions.sum;
@@ -46,20 +45,20 @@ public class EntityBasedCEP {
 		spark.udf().register("getWeightCEPECBS", new GetWeightCEPECBS(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.DoubleType)));
 
-		Dataset<Row> df = spark.read().json("data/blocks.json");
+		//Dataset<Row> df = spark.read().json("input/blocks.json");
 		Dataset<Row> dfAmazon = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Amazon.csv");
+				.load("input/AmazonGoogle/Amazon.csv");
 		Dataset<Row> dfGoogle = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Google.csv");
+				.load("input/AmazonGoogle/Google.csv");
 		Dataset<Row> dfUnion = dfAmazon.union(dfGoogle);
 		Dataset<Row> dfBlocked = blocking(dfUnion);
 
-		double indexOfWminDouble = (double) dfBlocked.agg(expr("sum(size(entities)/2)")).first().get(0);
+		double indexOfWminDouble = dfBlocked.agg(expr("sum(size(entities)/2)")).first().getDouble(0);
 		int indexOfWminInt = (int) indexOfWminDouble;
 
 		Dataset<Row> dfFiltered = blockFiltering(dfBlocked);
 		Dataset<Row> dfPreprocessing = preprocessing(dfFiltered);
-		Dataset<Row> dfCEP = cepPruning(dfPreprocessing, dfFiltered, indexOfWminInt);
+		Dataset<Row> dfCEP = cepPruning(dfPreprocessing, dfFiltered, indexOfWminInt, Integer.parseInt(args[0]));
 		dfCEP.show(false);
 	}
 
@@ -75,8 +74,8 @@ public class EntityBasedCEP {
 		df = df.withColumn("block", df.col("block").cast(DataTypes.LongType));
 		df = df.select("block", "entities");
 		df = df.withColumn("entities", array_distinct(df.col("entities")));
-		df.show(false);
-		df.printSchema();
+		//df.show(false);
+		//df.printSchema();
 		df.cache();
 		return df;
 	}
@@ -112,7 +111,7 @@ public class EntityBasedCEP {
 		df = df.groupBy("BlockId").agg(collect_list("entityId").as("EntityList"));
 		df = df.withColumn("listSize", size(df.col("EntityList")));
 		df = df.filter(col("listSize").geq(2)).drop("listSize");
-		df.show(false);
+		//df.show(false);
 		System.out.println("End of Preprocessing");
 
 		System.out
@@ -120,10 +119,10 @@ public class EntityBasedCEP {
 		return df;
 	}
 
-	private static Dataset<Row> cepPruning(Dataset<Row> df, Dataset<Row> dfTest, int index) {
-		int scheme = 1;
-		
-		if(scheme == 1) {
+	private static Dataset<Row> cepPruning(Dataset<Row> df, Dataset<Row> dfTest, int index, int scheme) {
+		//int scheme = 1;
+
+		if (scheme == 1) {
 			df = df.withColumn("Cardinality", expr("int(((size(EntityList)-1)*size(EntityList))/2)"));
 			df = df.withColumn("PairsList", callUDF("createPairs", df.col("EntityList")));
 			df = df.withColumn("PairsList", explode(df.col("PairsList")));
@@ -131,14 +130,14 @@ public class EntityBasedCEP {
 			df = df.dropDuplicates();
 			df = df.sort(df.col("Weight").desc());
 			Dataset<Row> dfId = df.withColumn("id", row_number().over(Window.orderBy(lit(1))));
-			dfId.show(false);
+			//dfId.show(false);
 			double minWeight = dfId.filter(dfId.col("id").equalTo(index)).select("Weight").head().getDouble(0);
-			df.show(false);
-			df= df.withColumnRenamed("PairsList", "Edge");
+			//df.show(false);
+			df = df.withColumnRenamed("PairsList", "Edge");
 			df = df.filter(df.col("Weight").geq(minWeight));
 			return df;
 		}
-		
+
 		df = df.withColumn("EntityId", explode(df.col("EntityList"))).drop("BlockId");
 		df = df.select("EntityId", "EntityList");
 		df = df.withColumnRenamed("EntityList", "CoOccurrenceBag");
@@ -146,7 +145,7 @@ public class EntityBasedCEP {
 		df = df.groupBy("EntityId").agg(flatten(collect_list("CoOccurrenceBag")).as("CoOccurrenceBag"));
 
 		df = df.withColumn("maxElement", array_max(df.col("CoOccurrenceBag")));
-		long maxelement = (long) df.select("maxElement").sort(df.col("maxElement").desc()).head().get(0);
+		long maxelement = df.select("maxElement").sort(df.col("maxElement").desc()).head().getLong(0);
 		df = df.withColumn("maxElement", lit((int) maxelement));
 //		df.show(false);
 		// The array frequencies contains for eve
@@ -188,7 +187,7 @@ public class EntityBasedCEP {
 		df = df.filter(col("Weight").geq(valueOfMinWeight));
 		df = df.select("Edge", "Weight").withColumn("Edge", array_sort(df.col("Edge")));
 		df = df.dropDuplicates();
-		df.show(false);
+		//df.show(false);
 		return df;
 	}
 
@@ -201,27 +200,30 @@ public class EntityBasedCEP {
 		List<Row> test = dfTest.select("arraysize").collectAsList();
 
 		ArrayList<Integer> testlist = new ArrayList<Integer>();
-		test.forEach(m -> testlist.add((Integer) m.get(0)));
-		dfTest.show(false);
+		for(Row item : test) {
+			testlist.add((Integer)item.get(0));
+		}
+//		test.forEach(m -> testlist.add((Integer) m.get(0)));
+		//dfTest.show(false);
 
 		String str = testlist.toString();
 		str = str.substring(1, str.length() - 1);
-		System.out.println(str);
+		//System.out.println(str);
 
 		df = df.withColumn("NumberOfBlocks", split(lit(str), ", ").cast(DataTypes.createArrayType(DataTypes.LongType)));
 		// ================================================================================================
 
-		df.show(false);
+		//df.show(false);
 		df = df.withColumn("Weight", callUDF("GetWeightCEPJaccard", df.col("Frequencies"),
 				df.col("SetOfNeighborsWithoutID"), df.col("NumberOfBlocks"), df.col("EntityId")));
-		df.show(false);
+		//df.show(false);
 		return df;
 	}
 
 	private static Dataset<Row> CBSScheme(Dataset<Row> df) {
 		df = df.withColumn("Weight", callUDF("GetWeightCEPCBS", df.col("Frequencies"),
 				df.col("SetOfNeighborsWithoutID"), df.col("EntityId")));
-		df.show(false);
+		//df.show(false);
 		return df;
 	}
 
@@ -235,20 +237,23 @@ public class EntityBasedCEP {
 		List<Row> test = dfTest.select("arraysize").collectAsList();
 
 		ArrayList<Integer> testlist = new ArrayList<Integer>();
-		test.forEach(m -> testlist.add((Integer) m.get(0)));
-		dfTest.show(false);
+		for (Row item : test) {
+			testlist.add((Integer) item.get(0));
+		}
+//		test.forEach(m -> testlist.add((Integer) m.get(0)));
+		//dfTest.show(false);
 
 		String str = testlist.toString();
 		str = str.substring(1, str.length() - 1);
-		System.out.println(str);
+		//System.out.println(str);
 
 		df = df.withColumn("NumberOfBlocks", split(lit(str), ", ").cast(DataTypes.createArrayType(DataTypes.LongType)));
 		// ================================================================================================
 		df = df.withColumn("BlockSize", lit(BlockSize));
-		df.show(false);
+		//df.show(false);
 		df = df.withColumn("Weight", callUDF("GetWeightCEPECBS", df.col("Frequencies"),
 				df.col("SetOfNeighborsWithoutID"), df.col("NumberOfBlocks"), df.col("EntityId"), df.col("BlockSize")));
-		df.show(false);
+		//df.show(false);
 		return df;
 	}
 }

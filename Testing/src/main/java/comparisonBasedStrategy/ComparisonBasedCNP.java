@@ -47,11 +47,11 @@ public class ComparisonBasedCNP {
 		spark.udf().register("CreateNodePairs", new createPairsUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 
-		Dataset<Row> df = spark.read().json("data/blocks.json");
+		//Dataset<Row> df = spark.read().json("input/blocks.json");
 		Dataset<Row> dfAmazon = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Amazon.csv");
+				.load("input/AmazonGoogle/Amazon.csv");
 		Dataset<Row> dfGoogle = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Google.csv");
+				.load("input/AmazonGoogle/Google.csv");
 		Dataset<Row> dfUnion = dfAmazon.union(dfGoogle);
 		Dataset<Row> dfBlocked = blocking(dfUnion);
 		Dataset<Row> dfmapped = blockFiltering(dfBlocked);
@@ -63,14 +63,15 @@ public class ComparisonBasedCNP {
 		dftest = dftest.groupBy("entities").count();
 		int entityCollection = (int) dftest.count();
 		dfForIndex = dfForIndex.withColumn("entityCollection", lit(entityCollection));
-		double indexOfkTopElementsDouble = (double) dfForIndex.agg(expr("sum(size(entities)/(entityCollection-1))"))
-				.first().get(0);
+		double indexOfkTopElementsDouble = dfForIndex.agg(expr("sum(size(entities)/(entityCollection-1))"))
+				.first().getDouble(0);
 		int indexOfkTopElementsInt = (int) indexOfkTopElementsDouble;
 		// =================================================================
 
-		Dataset<Row> dfWNP = cnpPruning(dfPreprocessing, indexOfkTopElementsInt);
-		dfWNP.sort(dfWNP.col("Weight").desc()).show(false);
-		dfWNP.printSchema();
+		Dataset<Row> dfCNP = cnpPruning(dfPreprocessing, indexOfkTopElementsInt, Integer.parseInt(args[0]));
+		dfCNP.sort(dfCNP.col("Weight").desc()).show(false);
+		dfCNP.printSchema();
+		spark.close();
 	}
 
 	private static Dataset<Row> blocking(Dataset<Row> df) {
@@ -85,7 +86,7 @@ public class ComparisonBasedCNP {
 		df = df.withColumn("block", df.col("block").cast(DataTypes.LongType));
 		df = df.select("block", "entities");
 		df = df.withColumn("entities", array_distinct(df.col("entities")));
-		df.show(false);
+		//df.show(false);
 		df.printSchema();
 		df.cache();
 		return df;
@@ -126,8 +127,8 @@ public class ComparisonBasedCNP {
 		return df;
 	}
 
-	private static Dataset<Row> cnpPruning(Dataset<Row> df, int index) {
-		int scheme = 1;
+	private static Dataset<Row> cnpPruning(Dataset<Row> df, int index, int scheme) {
+		//int scheme = 1;
 		if (scheme == 1) {
 //			df = df.withColumn("Cardinality", expr("int(((size(EntityId_AssociatedBlocks)-1)*size(EntityId_AssociatedBlocks))/2)"));
 			df = df.withColumn("EntityIdList", df.col("EntityId_AssociatedBlocks.entityId"));
@@ -143,7 +144,7 @@ public class ComparisonBasedCNP {
 					collect_list("BlockId").as("BlockId"));
 //			df.show(false);
 			df = df.withColumn("BlockId", explode(df.col("BlockId")));
-			df.show(false);
+			//df.show(false);
 
 //			df.show(false);
 //			df.cache();
@@ -192,7 +193,7 @@ public class ComparisonBasedCNP {
 		df = df.withColumn("Edges", explode(df.col("BothEdges"))).drop("BothEdges");
 		df = df.withColumn("Node2_Weight", struct(df.col("Edges").getItem(1), df.col("Weight")))
 				.withColumn("Node", df.col("Edges").getItem(0)).drop("JaccardWeight").select("Node", "Node2_Weight");
-		df.show(false);
+		//df.show(false);
 
 		df = df.orderBy(desc("Node2_Weight.Weight")).groupBy("Node")
 				.agg(collect_list(df.col("Node2_Weight")).as("Node2_Weight"));

@@ -9,7 +9,8 @@ import scala.collection.mutable.WrappedArray;
 public class FilterNodesUdfARCS implements UDF4<WrappedArray<Long>, WrappedArray<Long>,WrappedArray<Double>, Double, ArrayList<ArrayList<Double>>> {
 	private static final long serialVersionUID = -21621751L;
 
-	public ArrayList<ArrayList<Double>> call(WrappedArray<Long> iEntities, WrappedArray<Long> jEntities, WrappedArray<Double> weights, Double meanWeight) throws Exception {
+	public ArrayList<ArrayList<Double>> call(WrappedArray<Long> iEntities, WrappedArray<Long> jEntities, 
+			WrappedArray<Double> weights, Double meanWeight) throws Exception {
 		
 		ArrayList<ArrayList<Double>> pairs = new ArrayList<ArrayList<Double>>();
 		

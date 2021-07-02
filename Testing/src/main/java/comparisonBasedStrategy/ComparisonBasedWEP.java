@@ -27,8 +27,7 @@ public class ComparisonBasedWEP {
 
 	public static void main(String[] args) {
 
-		SparkSession spark = SparkSession.builder().appName("Comparison Based Strategy").config("spark.master", "local")
-				.config("spark.executor.memory", "4g").config("spark.driver.memory", "4g").getOrCreate();
+		SparkSession spark = SparkSession.builder().appName("Comparison Based Strategy").config("spark.master", "local").getOrCreate();
 		spark.sparkContext().setLogLevel("ERROR");
 
 		spark.udf().register("CommonBlocksUdfWNP", new CalculateCommonBlocksUDF(),
@@ -44,11 +43,11 @@ public class ComparisonBasedWEP {
 		spark.udf().register("CreateNodePairs", new createPairsUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 
-		Dataset<Row> df = spark.read().json("data/blocks.json");
+		//Dataset<Row> df = spark.read().json("input/blocks.json");
 		Dataset<Row> dfAmazon = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Amazon.csv");
+				.load("input/AmazonGoogle/Amazon.csv");
 		Dataset<Row> dfGoogle = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Google.csv");
+				.load("input/AmazonGoogle/Google.csv");
 		Dataset<Row> dfUnion = dfAmazon.union(dfGoogle);
 		dfUnion.cache();
 		Dataset<Row> dfBlocked = blocking(dfUnion);
@@ -57,8 +56,9 @@ public class ComparisonBasedWEP {
 		dfmapped.cache();
 		Dataset<Row> dfPreprocessing = preprocessing(dfmapped);
 		dfPreprocessing.cache();
-		Dataset<Row> dfWNP = wepPruning(dfPreprocessing);
-		dfWNP.sort(dfWNP.col("Weight").desc()).show(false);
+		Dataset<Row> dfWEP = wepPruning(dfPreprocessing, Integer.parseInt(args[0]));
+		dfWEP.sort(dfWEP.col("Weight").desc()).show(false);
+		spark.close();
 
 //		dfWNP.sort(dfWNP.col("Weight").desc()).show(false);
 //		dfWNP.printSchema();
@@ -119,8 +119,8 @@ public class ComparisonBasedWEP {
 		return df;
 	}
 
-	private static Dataset<Row> wepPruning(Dataset<Row> df) {
-		int scheme = 1;
+	private static Dataset<Row> wepPruning(Dataset<Row> df, int scheme) {
+		//int scheme = 1;
 		if (scheme == 1) {
 //			df = df.withColumn("Cardinality", expr("int(((size(EntityId_AssociatedBlocks)-1)*size(EntityId_AssociatedBlocks))/2)"));
 			df = df.withColumn("EntityIdList", df.col("EntityId_AssociatedBlocks.entityId"));
@@ -176,13 +176,13 @@ public class ComparisonBasedWEP {
 			df = df.withColumn("merged_arrays", explode(expr(transform_expr)))
 					.withColumn("Weight", col("merged_arrays.element1"))
 					.withColumn("Edges", col("merged_arrays.element2")).drop("merged_arrays").drop("WeightsList");
-			df.show();
+			//df.show();
 		}
 		df = df.dropDuplicates();
 		df.cache();
 
 		int numberOfEdges = (int) df.count();
-		double totalWeight = (double) df.agg(sum(df.col("Weight"))).first().get(0);
+		double totalWeight = df.agg(sum(df.col("Weight"))).first().getDouble(0);
 
 		df = df.select("Edges", "Weight").filter(col("Weight").gt(totalWeight / numberOfEdges));
 		return df;

@@ -9,7 +9,6 @@ import static org.apache.spark.sql.functions.row_number;
 import static org.apache.spark.sql.functions.size;
 import static org.apache.spark.sql.functions.split;
 import static org.apache.spark.sql.functions.array_sort;
-import static org.apache.spark.sql.functions.array_intersect;
 import static org.apache.spark.sql.functions.struct;
 import static org.apache.spark.sql.functions.callUDF;
 
@@ -50,21 +49,22 @@ public class ComparisonBasedWNP {
 		spark.udf().register("CreateNodePairs", new createPairsUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 
-		Dataset<Row> df = spark.read().json("data/blocks.json");
+		//Dataset<Row> df = spark.read().json("input/blocks.json");
 		Dataset<Row> dfAmazon = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Amazon.csv");
+				.load("input/AmazonGoogle/Amazon.csv");
 		Dataset<Row> dfGoogle = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Google.csv");
+				.load("input/AmazonGoogle/Google.csv");
 		Dataset<Row> dfUnion = dfAmazon.union(dfGoogle);
 
 		Dataset<Row> dfBlocked = blocking(dfUnion);
-		Dataset<Row> dfmapped = blockFiltering(df);
+		Dataset<Row> dfmapped = blockFiltering(dfBlocked);
 //		dfmapped.cache();
 		Dataset<Row> dfPreprocessing = preprocessing(dfmapped);
 		dfmapped.cache();
-		Dataset<Row> dfWNP = wnpPruning(dfPreprocessing);
+		Dataset<Row> dfWNP = wnpPruning(dfPreprocessing, Integer.parseInt(args[0]));
 		dfWNP.sort(dfWNP.col("Weight").desc()).show(false);
 		dfWNP.printSchema();
+		spark.close();
 	}
 
 	private static Dataset<Row> blocking(Dataset<Row> df) {
@@ -80,7 +80,7 @@ public class ComparisonBasedWNP {
 		df = df.select("block", "entities");
 		df = df.withColumn("entities", array_distinct(df.col("entities")));
 //		df.show(false);
-		df.printSchema();
+		//df.printSchema();
 		df.cache();
 		return df;
 	}
@@ -121,13 +121,13 @@ public class ComparisonBasedWNP {
 		return df;
 	}
 
-	private static Dataset<Row> wnpPruning(Dataset<Row> df) {
+	private static Dataset<Row> wnpPruning(Dataset<Row> df, int scheme) {
 
-		int scheme = 1;
+		//int scheme = 1;
 		int BlockSize = 0;
 		if (scheme == 1) {
 //			df = df.withColumn("Cardinality", expr("int(((size(EntityId_AssociatedBlocks)-1)*size(EntityId_AssociatedBlocks))/2)"));
-			df.show(false);
+			//df.show(false);
 			df = df.withColumn("EntityIdList", df.col("EntityId_AssociatedBlocks.entityId"));
 			df = df.withColumn("Edges", callUDF("CreateNodePairs", df.col("EntityIdList"))).drop("EntityIdList");
 			df.cache();
@@ -147,7 +147,7 @@ public class ComparisonBasedWNP {
 //			df.cache();
 			df = df.withColumnRenamed("Edges2", "Edges");
 //			df = df.groupBy("BlockId").agg(collect_list(df.col("Edges2")).as("Edges"), collect_list("Weight").as("WeightsList"));
-			df.show(false);
+			//df.show(false);
 		} else {
 			if(scheme == 4) {
 				BlockSize = (int) df.count();
@@ -158,13 +158,13 @@ public class ComparisonBasedWNP {
 //			df.show(false);
 
 			df = df.withColumn("Edges", callUDF("CreateNodePairs", df.col("EntityIdList"))).drop("EntityIdList");
-			df.show(false);
+			//df.show(false);
 //			df.cache();
 			df = df.withColumn("CommonBlocks",
 					callUDF("CommonBlocksUdfWNP", df.col("EntityId_AssociatedBlocks.AssociatedBlocks")))
 					.withColumn("BlockSize",
 							callUDF("BlockSizeUdfWNP", df.col("EntityId_AssociatedBlocks.AssociatedBlocks")));
-			df.show(false);
+			//df.show(false);
 			df.cache();
 //			df.show(false);
 
@@ -217,14 +217,14 @@ public class ComparisonBasedWNP {
 		df = df.withColumn("WeightsList",
 				callUDF("GetWeightUdfWNPJaccard", df.col("BlockSize"), df.col("CommonBlocks")))
 				.drop("EntityId_AssociatedBlocks").drop("CommonBlocks").drop("BlockSize").drop("BlockId");
-		df.show(false);
+		//df.show(false);
 		return df;
 	}
 
 	private static Dataset<Row> CBSScheme(Dataset<Row> df) {
 		df = df.withColumn("WeightsList", callUDF("GetWeightUdfWNPCBS", df.col("BlockSize"), df.col("CommonBlocks")))
 				.drop("EntityId_AssociatedBlocks").drop("CommonBlocks").drop("BlockSize").drop("BlockId");
-		df.show(false);
+		//df.show(false);
 		return df;
 	}
 
@@ -233,7 +233,7 @@ public class ComparisonBasedWNP {
 		df = df.withColumn("WeightsList",
 				callUDF("GetWeightUdfWNPECBS", df.col("BlockSize"), df.col("CommonBlocks"), df.col("NumberOfBlocks")))
 				.drop("EntityId_AssociatedBlocks").drop("CommonBlocks").drop("BlockSize").drop("BlockId");
-		df.show(false);
+		//df.show(false);
 		return df;
 	}
 }

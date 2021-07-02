@@ -4,11 +4,9 @@ import static org.apache.spark.sql.functions.array_distinct;
 import static org.apache.spark.sql.functions.callUDF;
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.collect_list;
-import static org.apache.spark.sql.functions.desc;
 import static org.apache.spark.sql.functions.explode;
 import static org.apache.spark.sql.functions.expr;
 import static org.apache.spark.sql.functions.lit;
-import static org.apache.spark.sql.functions.monotonically_increasing_id;
 import static org.apache.spark.sql.functions.row_number;
 import static org.apache.spark.sql.functions.size;
 import static org.apache.spark.sql.functions.split;
@@ -31,26 +29,26 @@ public class EdgeBasedCEP {
 
 		// Stage 1: Block Filtering
 		spark.sparkContext().setLogLevel("ERROR");
-		Dataset<Row> df = spark.read().json("data/blocks.json");
+		//Dataset<Row> df = spark.read().json("input/blocks.json");
 		Dataset<Row> dfAmazon = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Amazon.csv");
+				.load("input/AmazonGoogle/Amazon.csv");
 		Dataset<Row> dfGoogle = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Google.csv");
+				.load("input/AmazonGoogle/Google.csv");
 
 		spark.udf().register("createPairs", new createPairsUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 		spark.udf().register("extractInfo", new extractInfoUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.IntegerType)));
 		spark.udf().register("averageWeight", new averageWeightUdf(), DataTypes.DoubleType);
-		df.show(false);
+		//df.show(false);
 
 		Dataset<Row> dfUnion = dfAmazon.union(dfGoogle);
 		Dataset<Row> dfBlocked = blocking(dfUnion);
 		int BlockSize = (int) dfBlocked.count();
 		
-		double indexOfWminDouble = (double) dfBlocked.agg(expr("sum(size(entities)/2)")).first().get(0);
+		double indexOfWminDouble = dfBlocked.agg(expr("sum(size(entities)/2)")).first().getDouble(0);
 		int indexOfWminInt = (int) indexOfWminDouble;
-		System.out.println("========================== " + indexOfWminInt);
+		//System.out.println("========================== " + indexOfWminInt);
 		// Stage 1: Block Filtering
 		Dataset<Row> dfmapped = blockFiltering(dfBlocked);
 
@@ -58,9 +56,9 @@ public class EdgeBasedCEP {
 				"==============================================================================================");
 		// Stage 2: Preprocessing
 
-		Dataset<Row> dfnodes = preprocessing(dfmapped, BlockSize);
+		Dataset<Row> dfnodes = preprocessing(dfmapped, BlockSize, Integer.parseInt(args[0]));
 		dfnodes.cache();
-		dfnodes.show(false);
+		//dfnodes.show(false);
 
 		// Stage 3 Prunning
 		// Creates the preffered schema for the stage 3 (Pruning Stage)
@@ -70,7 +68,7 @@ public class EdgeBasedCEP {
 
 		System.out.println(
 				"====================================================CEP RESULT====================================================");
-		dfnodesCEP.show(false);
+		dfnodesCEP.sort(dfnodesCEP.col("Weight").desc()).show(false);
 		System.out.println(
 				"==================================================================================================================");
 
@@ -88,8 +86,8 @@ public class EdgeBasedCEP {
 		df = df.withColumn("block", df.col("block").cast(DataTypes.LongType));
 		df = df.select("block", "entities");
 		df = df.withColumn("entities", array_distinct(df.col("entities")));
-		df.show(false);
-		df.printSchema();
+		//df.show(false);
+		//df.printSchema();
 		df.cache();
 		return df;
 	}
@@ -115,8 +113,8 @@ public class EdgeBasedCEP {
 		return df;
 	}
 
-	private static Dataset<Row> preprocessing(Dataset<Row> df, int BlockSize) {
-		int scheme = 3;
+	private static Dataset<Row> preprocessing(Dataset<Row> df, int BlockSize, int scheme) {
+		//int scheme = 3;
 		/*
 		 * 1 = ARCS 2 = CBS 3 = ECBS 4 = JS
 		 */
@@ -181,11 +179,12 @@ public class EdgeBasedCEP {
 
 			// Counts how many times there is a pair among all blocks.
 			// So it is the common blocks between two entities
-			System.out.println("Common blocks");
+			//System.out.println("Common blocks");
 			df1Test = df1Test.groupBy("PairsList").count();
 
 			if (scheme == 2) {
 				df1Test = df1Test.withColumnRenamed("count", "Weight").withColumnRenamed("PairsList", "Node");
+				df1Test = df1Test.withColumn("Weight", df1Test.col("Weight").cast(DataTypes.DoubleType));
 			} else {
 				df1Test = df1Test.join(df, df1Test.col("PairsList").equalTo(df.col("Edges")));
 //				df1Test.show(false);
@@ -220,7 +219,7 @@ public class EdgeBasedCEP {
 				}
 			}
 
-			df1Test.printSchema();
+			//df1Test.printSchema();
 			// dfnodes.cache();
 			// dfnodes.show(false);
 			return df1Test;

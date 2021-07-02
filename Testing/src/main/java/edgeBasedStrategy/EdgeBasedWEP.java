@@ -1,5 +1,6 @@
 package edgeBasedStrategy;
 
+import static org.apache.spark.sql.functions.array_distinct;
 import static org.apache.spark.sql.functions.avg;
 import static org.apache.spark.sql.functions.callUDF;
 import static org.apache.spark.sql.functions.col;
@@ -7,6 +8,7 @@ import static org.apache.spark.sql.functions.collect_list;
 import static org.apache.spark.sql.functions.explode;
 import static org.apache.spark.sql.functions.expr;
 import static org.apache.spark.sql.functions.lit;
+import static org.apache.spark.sql.functions.lower;
 import static org.apache.spark.sql.functions.row_number;
 import static org.apache.spark.sql.functions.size;
 import static org.apache.spark.sql.functions.split;
@@ -27,30 +29,33 @@ public class EdgeBasedWEP {
 
 		// Stage 1: Block Filtering
 		spark.sparkContext().setLogLevel("ERROR");
-		Dataset<Row> df = spark.read().json("data/blocks.json");
+		//Dataset<Row> df = spark.read().json("input/blocks.json");
 		Dataset<Row> dfAmazon = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Amazon.csv");
+				.load("input/AmazonGoogle/Amazon.csv");
+		Dataset<Row> dfGoogle = spark.read().format("csv").option("header", "true")
+				.load("input/AmazonGoogle/Google.csv");
 		
 		spark.udf().register("createPairs", new createPairsUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.LongType)));
 		spark.udf().register("extractInfo", new extractInfoUdf(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.IntegerType)));
 		spark.udf().register("averageWeight", new averageWeightUdf(), DataTypes.DoubleType);
-
-		dfAmazon = blocking(dfAmazon);
-		int BlockSize = (int) df.count(); //change to big dataset
+		
+		Dataset<Row> dfUnion = dfAmazon.union(dfGoogle);
+		Dataset<Row> dfBlocked = blocking(dfUnion);
+		int BlockSize = (int) dfBlocked.count(); //change to big dataset
 		
 		// Stage 1: Block Filtering
-		Dataset<Row> dfmapped = blockFiltering(dfAmazon);
+		Dataset<Row> dfmapped = blockFiltering(dfBlocked);
 
-		dfmapped.show(false);
+		//dfmapped.show(false);
 		System.out.println(
 				"==============================================================================================");
 		// Stage 2: Preprocessing
 
-		Dataset<Row> dfnodes = preprocessing(dfmapped, BlockSize);
+		Dataset<Row> dfnodes = preprocessing(dfmapped, BlockSize, Integer.parseInt(args[0]));
 		dfnodes.cache();
-		dfnodes.show(false);
+		//dfnodes.show(false);
 
 		// ========================================= Weighted Edge Pruning
 		double meanWeight = dfnodes.select(avg(dfnodes.col("Weight"))).head().getDouble(0);
@@ -61,21 +66,22 @@ public class EdgeBasedWEP {
 		
 	}
 	private static Dataset<Row> blocking(Dataset<Row> df) {
-		df = df.withColumn("entityid", row_number().over(Window.orderBy(lit(1)))).drop("description")
+		df = df.withColumn("title", lower(df.col("title")))
+				.withColumn("entityid", row_number().over(Window.orderBy(lit(1)))).drop("description")
 				.drop("manufacturer").drop("price").drop("id");
 		df = df.withColumn("entityid", df.col("entityid").cast(DataTypes.LongType));
-		df = df.withColumn("title", split(df.col("title"), " "));
+		df = df.withColumn("title", split(df.col("title"), " |\\,|\\(|\\)|\\&|\\:|\\/|\\-"));
 		df = df.withColumn("titleTokens", explode(df.col("title"))).drop("title");
 		df = df.groupBy("titletokens").agg(collect_list("entityid").as("entities"));
 		df = df.withColumn("block", row_number().over(Window.orderBy(lit(1)))).drop("titletokens");
 		df = df.withColumn("block", df.col("block").cast(DataTypes.LongType));
 		df = df.select("block", "entities");
-		df.show(false);
-		df.printSchema();
+		df = df.withColumn("entities", array_distinct(df.col("entities")));
+		//df.show(false);
+		//df.printSchema();
 		df.cache();
 		return df;
 	}
-
 	private static Dataset<Row> blockFiltering(Dataset<Row> df) {
 		/*
 		 * Calculates the cardinality of each block and creates a new column to
@@ -97,8 +103,8 @@ public class EdgeBasedWEP {
 		return df;
 	}
 
-	private static Dataset<Row> preprocessing(Dataset<Row> df, int BlockSize) {
-		int scheme = 3;
+	private static Dataset<Row> preprocessing(Dataset<Row> df, int BlockSize, int scheme) {
+		//int scheme = 3;
 		/*
 		 * 1 = ARCS 2 = CBS 3 = ECBS 4 = JS
 		 */
@@ -202,7 +208,7 @@ public class EdgeBasedWEP {
 				}
 			}
 
-			df1Test.printSchema();
+			//df1Test.printSchema();
 			// dfnodes.cache();
 			// dfnodes.show(false);
 			return df1Test;

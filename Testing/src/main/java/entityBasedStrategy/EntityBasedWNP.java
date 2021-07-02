@@ -16,20 +16,13 @@ import static org.apache.spark.sql.functions.lit;
 import static org.apache.spark.sql.functions.lower;
 import static org.apache.spark.sql.functions.row_number;
 import static org.apache.spark.sql.functions.array_max;
-import static org.apache.spark.sql.functions.struct;
 import static org.apache.spark.sql.functions.sum;
 
-import org.apache.spark.sql.api.java.UDF2;
 import org.apache.spark.sql.expressions.Window;
-import org.apache.spark.sql.types.DataType;
 import org.apache.spark.sql.types.DataTypes;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
-import scala.collection.mutable.WrappedArray;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 import org.apache.spark.sql.Dataset;
@@ -62,11 +55,11 @@ public class EntityBasedWNP {
 		spark.udf().register("filterNodesECBS", new FilterNodesUDFECBS(),
 				DataTypes.createArrayType(DataTypes.createArrayType(DataTypes.DoubleType)));
 
-		Dataset<Row> df = spark.read().json("data/blocks.json");
+//		Dataset<Row> df = spark.read().json("input/blocks.json");
 		Dataset<Row> dfAmazon = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Amazon.csv");
+				.load("input/AmazonGoogle/Amazon.csv");
 		Dataset<Row> dfGoogle = spark.read().format("csv").option("header", "true")
-				.load("data/AmazonGoogle/Google.csv");
+				.load("input/AmazonGoogle/Google.csv");
 		Dataset<Row> dfUnion = dfAmazon.union(dfGoogle);
 		dfUnion.cache();
 		Dataset<Row> dfBlocked = blocking(dfUnion);
@@ -77,7 +70,7 @@ public class EntityBasedWNP {
 		// dfTest = DfFiltered
 		Dataset<Row> dfPreprocessing = preprocessing(dfFiltered);
 
-		Dataset<Row> dfPruned = wnpPruning(dfPreprocessing, dfTest);
+		Dataset<Row> dfPruned = wnpPruning(dfPreprocessing, dfTest, Integer.parseInt(args[0]));
 		dfPruned.sort(dfPruned.col("Weight").desc()).show(false);
 //		dfPruned.write().json("data/Results/EntityBasedARCS/arcs.json");
 
@@ -140,106 +133,54 @@ public class EntityBasedWNP {
 		return df;
 	}
 
-	private static Dataset<Row> wnpPruning(Dataset<Row> df, Dataset<Row> dfTest) {
-		int scheme = 1;
+	private static Dataset<Row> wnpPruning(Dataset<Row> df, Dataset<Row> dfTest, int scheme) {
+		//int scheme = 2;
 		if (scheme == 1) {
-//			df.show(false);
+			//df.show(false);
 			df = df.withColumn("Cardinality", expr("int(((size(EntityList)-1)*size(EntityList))/2)"));
-//			df.show(false);
+			//df.show(false);
 			df = df.withColumn("PairsList", callUDF("createPairs", df.col("EntityList")));
-//			df.show(false);
+			//df.show(false);
 			df = df.withColumn("PairsList", explode(df.col("PairsList")));
-//			df.show(false);
+			//df.show(false);
 			df = df.groupBy("PairsList").agg(sum(expr("1/Cardinality")).as("Weight"),
 					collect_list("BlockId").as("BlockId"));
-//			df.show(false);
+			//df.show(false);
 			df = df.withColumn("BlockId", explode(df.col("BlockId")));
 
 			df = df.withColumn("iEntityId", df.col("PairsList").getItem(0))
 					.withColumn("jEntityId", df.col("PairsList").getItem(1)).drop("PairsList");
-//			df.show(false);
+			//df.show(false);
 			df = df.groupBy("BlockId").agg(collect_list("iEntityId").as("iEntityId"),
 					collect_list("jEntityId").as("jEntityId"), collect_list("Weight").as("Weight"),
 					sum("Weight").as("NeighWeight"));
-//			df.show(false);
+			//df.show();
 			df = df.withColumn("MeanWeight", expr("NeighWeight/ size(Weight)"));
 			df = df.withColumn("Filtered",
 					callUDF("filterNodes", df.col("iEntityId"), df.col("jEntityId"), df.col("Weight"),
 							df.col("MeanWeight")))
 					.drop("BlockId").drop("jEntityId").drop("iEntityId").drop("Weight").drop("NeighWeight")
 					.drop("MeanWeight");
-//			df.show(false);
+			//df.show(false);
 			df = df.withColumn("Filtered", explode(df.col("Filtered")));
 			df = df.withColumn("Edge",
 					array(df.col("Filtered").getItem(0).cast(DataTypes.LongType),
 							df.col("Filtered").getItem(1).cast(DataTypes.LongType)))
 					.withColumn("Weight", df.col("Filtered").getItem(2).cast(DataTypes.DoubleType)).drop("Filtered");
 			df = df.dropDuplicates();
-//			df.show(false);
 
-//			df.show(false);
-//			df = df.groupBy("BlockId").agg(collect_list("PairsList").as("PairsList"), collect_list("Weight").as("Weight"), sum(df.col("Weight")).as("NeighborhoodWeight"));
-//			df.show(false);
-//			df = df.withColumn("MeanWeight", expr("NeighborhoodWeight/ size(PairsList)")).drop("NeighborhoodWeight").drop("BlockId");
-//			df.show(false);
-//			
-//			String transform_expr = "transform(PairsList, (x, i) -> struct(x as element1, Weight[i] as element2))";
-//			df = df.withColumn("merged_arrays", explode(expr(transform_expr)))
-//					.withColumn("Edges", col("merged_arrays.element1"))
-//					.withColumn("Weights", col("merged_arrays.element2")).drop("merged_arrays")
-//					.drop("PairsList").drop("Weight");
-//			df.show(false);
-//			df = df.filter(df.col("Weights").gt(df.col("MeanWeight"))).drop("MeanWeight");
-//			df = df.withColumnRenamed("Weights", "Weight");
-//			df.show(false);
-
-//			df = df.withColumn("EntityId", explode(df.col("EntityList")));
-//			df = df.select("BlockId","EntityId", "EntityList", "Cardinality");
-
-//			df = df.withColumn("CoOccurrenceBag_Cardinality", struct(df.col("CoOccurrenceBag"), df.col("Cardinality")));
-//			df.show(false);
-
-//			df = df.groupBy("EntityId").agg(collect_list("CoOccurrenceBag_Cardinality").as("CoOccurrenceBag"));
-//			df = df.groupBy("EntityId", "Cardinality").agg(flatten(collect_list("CoOccurrenceBag")).as("CoOccurrenceBag"));
-//			df = df.groupBy("EntityId").agg(collect_list("CoOccurrenceBag").as("CoOccurrenceBag"), collect_list("Cardinality").as("Cardinality"));
-//			df.show(false);
-//			df = df.withColumn("SetOfNeighbors", array_remove(array_distinct(df.col("CoOccurrenceBag")),df.col("EntityId")));
-////			df.show(false);
-//			df = df.withColumn("SetOfNeighbors", explode(df.col("SetOfNeighbors")));
-////			df.show(false);
-//			df = df.groupBy("BlockId","EntityId").agg(collect_list(df.col("SetOfNeighbors")), collect_list(df.col("Cardinality")));
-////			df = df.groupBy("EntityId");
-//			df.show(false);
-
-			// WEP========================================================================================
-//			df = df.withColumn("Edge", array_sort(array(df.col("EntityId"), df.col("SetOfNeighbors")))).drop("CoOccurrenceBag").drop("SetOfNeighbors").drop("EntityId");
-//			df = df.dropDuplicates();
-//			df.show(false);
-//			df = df.groupBy("Edge").agg(sum(expr("1/Cardinality")).as("Weight"));
-//			df.show();
-//			Double totalWeight = df.agg(sum(df.col("Weight"))).head().getDouble(0);
-//			df = df.filter(df.col("Weight").gt(totalWeight/df.count()));
-			// ============================================================================
-
-//			df = df.groupBy("Edge").agg(collect_list(df.col("Cardinality")));
-//			df = df.groupBy("EntityId").agg(collect_list(df.col("SetOfNeighbors")).as("SetOfNeighbors"), collect_list(df.col("Cardinality")).as("Cardinality"));
-//			df = df.withColumn("Weight", callUDF("GetWeightARCS",df.col("SetOfNeighbors"), df.col("Cardinality")));
-//			df.show(false);
-//			df.printSchema();
-//			df = df.withColumn("CoOccurrenceBag1", df.col("CoOccurrenceBag.CoOccurrenceBag")).withColumn("Cardninality", df.col("CoOccurrenceBag.Cardinality"));
-//			df.show(false);
 			return df;
 		} else {
 			df = df.withColumn("EntityId", explode(df.col("EntityList"))).drop("BlockId");
 			df = df.select("EntityId", "EntityList");
 			df = df.withColumnRenamed("EntityList", "CoOccurrenceBag");
-			df.show(false);
+			//df.show(false);
 
 			df = df.groupBy("EntityId").agg(flatten(collect_list("CoOccurrenceBag")).as("CoOccurrenceBag"));
-			df.show(false);
+			//df.show(false);
 
 			df = df.withColumn("maxElement", array_max(df.col("CoOccurrenceBag")));
-			long maxelement = (long) df.select("maxElement").sort(df.col("maxElement").desc()).head().get(0);
+			long maxelement = df.select("maxElement").sort(df.col("maxElement").desc()).head().getLong(0);
 			df = df.withColumn("maxElement", lit((int) maxelement));
 			// The array frequencies contains for eve
 			df = df.withColumn("Frequencies",
@@ -285,7 +226,10 @@ public class EntityBasedWNP {
 		List<Row> test = dfTest.select("arraysize").collectAsList();
 
 		ArrayList<Integer> testlist = new ArrayList<Integer>();
-		test.forEach(m -> testlist.add((Integer) m.get(0)));
+		for(Row item : test) {
+			testlist.add((Integer)item.get(0));
+		}
+//		test.forEach(m -> testlist.add((Integer) m.get(0)));
 
 		String str = testlist.toString();
 		str = str.substring(1, str.length() - 1);
@@ -317,7 +261,7 @@ public class EntityBasedWNP {
 		df = df.withColumn("AverageWeight", expr("TotalWeight / NumberOfEdges")).drop("NumberOfEdges")
 				.drop("CoOccurrenceBag").drop("TotalWeight");
 		df.cache();
-		df.printSchema();
+		//df.printSchema();
 		df = df.withColumn("FilteredNeighborhood",
 				callUDF("filterNodesCBS", df.col("Frequencies"), df.col("SetOfNeighborsWithoutID"),
 						df.col("AverageWeight")))
@@ -335,7 +279,10 @@ public class EntityBasedWNP {
 		List<Row> test = dfTest.select("arraysize").collectAsList();
 
 		ArrayList<Integer> testlist = new ArrayList<Integer>();
-		test.forEach(m -> testlist.add((Integer) m.get(0)));
+		for(Row item : test) {
+			testlist.add((Integer)item.get(0));
+		}
+//		test.forEach(m -> testlist.add((Integer) m.get(0)));
 
 		String str = testlist.toString();
 		str = str.substring(1, str.length() - 1);
@@ -351,7 +298,7 @@ public class EntityBasedWNP {
 		df = df.withColumn("AverageWeight", expr("TotalWeight / NumberOfEdges")).drop("NumberOfEdges")
 				.drop("CoOccurrenceBag").drop("TotalWeight");
 		df.cache();
-		df.printSchema();
+		//df.printSchema();
 		df = df.withColumn("FilteredNeighborhood",
 				callUDF("filterNodesECBS", df.col("Frequencies"), df.col("SetOfNeighborsWithoutID"),
 						df.col("NumberOfBlocks"), df.col("EntityId"), df.col("BlockSize"), df.col("AverageWeight")))
